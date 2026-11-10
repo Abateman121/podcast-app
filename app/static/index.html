@@ -129,10 +129,15 @@ async function showPlaylists() {
 async function showShows(showId) {
   if (showId) {
     const eps = await api('/api/episodes?show_id=' + showId);
-    let html = `<div class="bar"><button class="g" id="bk">Back to shows</button></div>`;
+    let html = `<div class="bar"><button class="g" id="bk">Back to shows</button><button class="g" id="rescan">Re-scan ads</button></div><div class="msg" id="rmsg"></div>`;
     html += eps.map((e, i) => epRow(e, i)).join('');
     $('#main').innerHTML = html;
     $('#bk').onclick = () => showShows();
+    $('#rescan').onclick = async () => { let found = 0, queued = 0;
+      for (const e of eps.filter(x => x.playable && x.status !== 'downloaded' && x.status !== 'scanning')) {
+        const r = await post(`/api/episodes/${e.id}/rescan`); if (r.mode === 'new scan queued') queued++; else found += r.ads; }
+      await showShows(showId);
+      $('#rmsg').textContent = queued ? queued + ' episodes queued for a new scan. Watch the Queue tab.' : 'Re-checked with saved transcripts. ' + found + ' ads found in total.'; };
     document.querySelectorAll('.row').forEach(r => r.onclick = async () => {
       const e = eps[+r.dataset.i];
       if (!e.playable) { if (['queued','downloading'].includes(e.status)) { alert('Already in the download queue. Check the Queue tab.'); return; }
@@ -217,8 +222,9 @@ $('#tabs').onclick = ev => { const b = ev.target.closest('button'); if (!b) retu
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b)); render(); };
 
 // ---- player ----
-function play(i) {
+async function play(i) {
   qi = i; const e = queue[i]; if (!e) return;
+  try { Object.assign(e, await api('/api/episodes/' + e.id)); } catch (_) { /* play with what we have */ }
   au.src = '/audio/' + e.id;
   au.playbackRate = speeds[si];
   au.onloadedmetadata = () => { if (e.position > 5 && e.position < au.duration - 10) au.currentTime = e.position; };
@@ -260,6 +266,8 @@ $('#fwd').onclick = () => au.currentTime += 30;
 $('#seek').oninput = ev => { if (au.duration) au.currentTime = (ev.target.value / 1000) * au.duration; };
 $('#spd').onclick = () => { si = (si + 1) % speeds.length; au.playbackRate = speeds[si]; $('#spd').textContent = speeds[si].toFixed(2).replace(/0$/, '') + 'x'; };
 $('#skipad').onclick = () => { skipAds = !skipAds; $('#skipad').textContent = 'Ads: ' + (skipAds ? 'on' : 'off'); };
+setInterval(async () => { const e = queue[qi]; if (!e) return;
+  try { const f = await api('/api/episodes/' + e.id); e.ads = f.ads; e.status = f.status; } catch (_) {} }, 20000);
 window.addEventListener('pagehide', () => save(false));
 render();
 </script>

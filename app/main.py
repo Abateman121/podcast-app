@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import adscan
 import db
 import feeds
 import sources
@@ -141,6 +142,62 @@ def list_episodes(show_id: int, limit: int = 100):
     ).fetchall()
     conn.close()
     return [episode_dict(r) for r in rows]
+
+
+@app.get("/api/episodes/{episode_id}")
+def get_episode(episode_id: int):
+    conn = db.connect()
+    row = conn.execute(
+        f"SELECT {EP_COLS} FROM episodes e JOIN shows s ON s.id = e.show_id WHERE e.id = ?", (episode_id,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "Episode not found")
+    return episode_dict(row)
+
+
+def load_transcript(episode_id):
+    path = db.transcript_path(episode_id)
+    if not os.path.exists(path):
+        return None
+    with open(path) as fh:
+        return json.load(fh)
+
+
+@app.post("/api/episodes/{episode_id}/rescan")
+def rescan_episode(episode_id: int):
+    """Re-apply the current ad rules. Uses the saved transcript when there is one, otherwise queues a new scan."""
+    segments = load_transcript(episode_id)
+    conn = db.connect()
+    try:
+        if segments is not None:
+            ranges = adscan.find_ad_ranges(segments)
+            conn.execute(
+                "UPDATE episodes SET ads_json = ?, status = 'ready' WHERE id = ?", (json.dumps(ranges), episode_id)
+            )
+            conn.commit()
+            return {"mode": "saved transcript", "ads": len(ranges)}
+        conn.execute(
+            "UPDATE episodes SET status = 'downloaded' WHERE id = ? AND file_path IS NOT NULL "
+            "AND status IN ('ready', 'scan_error')",
+            (episode_id,),
+        )
+        conn.commit()
+        return {"mode": "new scan queued"}
+    finally:
+        conn.close()
+
+
+@app.get("/api/episodes/{episode_id}/debug")
+def debug_episode(episode_id: int):
+    segments = load_transcript(episode_id)
+    if segments is None:
+        raise HTTPException(404, "No saved transcript yet. Use Re-scan ads on the show page.")
+    return {
+        "segments": len(segments),
+        "ranges": adscan.find_ad_ranges(segments),
+        "hits": adscan.debug_hits(segments),
+    }
 
 
 @app.post("/api/episodes/{episode_id}/download")

@@ -4,6 +4,11 @@ import sqlite3
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 DB_PATH = os.path.join(DATA_DIR, "podcasts.db")
 AUDIO_DIR = os.path.join(DATA_DIR, "audio")
+TRANSCRIPT_DIR = os.path.join(DATA_DIR, "transcripts")
+
+
+def transcript_path(episode_id):
+    return os.path.join(TRANSCRIPT_DIR, f"{episode_id}.json")
 
 # Episode status flow:
 # new -> queued -> downloading -> downloaded -> scanning -> ready
@@ -50,6 +55,7 @@ def connect():
 
 def init():
     os.makedirs(AUDIO_DIR, exist_ok=True)
+    os.makedirs(TRANSCRIPT_DIR, exist_ok=True)
     conn = connect()
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)

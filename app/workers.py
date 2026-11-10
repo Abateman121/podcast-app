@@ -80,7 +80,9 @@ def scan_loop():
 
         try:
             print(f"[scan] episode {episode_id} started")
-            ranges = adscan.scan(row["file_path"], report)
+            ranges, segments = adscan.scan(row["file_path"], report)
+            with open(db.transcript_path(episode_id), "w") as fh:
+                json.dump(segments, fh)
             conn = db.connect()
             conn.execute(
                 "UPDATE episodes SET ads_json = ?, status = 'ready' WHERE id = ?",
