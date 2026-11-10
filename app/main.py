@@ -39,7 +39,8 @@ def episode_dict(row):
 
 EP_COLS = (
     "e.id, e.show_id, s.title AS show_title, s.image AS show_image, e.title, e.published, "
-    "e.duration, e.status, e.played, e.position, e.ads_json, e.file_path"
+    "e.duration, e.status, e.played, e.position, e.ads_json, e.file_path, "
+    "COALESCE(s.intro_skip, 0) AS intro_skip, COALESCE(s.outro_skip, 0) AS outro_skip"
 )
 
 
@@ -77,6 +78,11 @@ class UrlIn(BaseModel):
     url: str
 
 
+class SkipsIn(BaseModel):
+    intro_skip: int = 0
+    outro_skip: int = 0
+
+
 class ProgressIn(BaseModel):
     position: float
     played: bool = False
@@ -92,7 +98,10 @@ class PlaylistIn(BaseModel):
 @app.get("/api/shows")
 def list_shows():
     conn = db.connect()
-    rows = conn.execute("SELECT id, title, image, feed_url FROM shows ORDER BY title").fetchall()
+    rows = conn.execute(
+        "SELECT id, title, image, feed_url, COALESCE(intro_skip, 0) AS intro_skip, "
+        "COALESCE(outro_skip, 0) AS outro_skip FROM shows ORDER BY title"
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -105,6 +114,19 @@ def add_show(body: UrlIn):
         raise HTTPException(400, str(exc))
     workers.wake.set()
     return result
+
+
+@app.post("/api/shows/{show_id}/skips")
+def set_skips(show_id: int, body: SkipsIn):
+    intro = max(0, min(600, body.intro_skip))
+    outro = max(0, min(600, body.outro_skip))
+    conn = db.connect()
+    cur = conn.execute("UPDATE shows SET intro_skip = ?, outro_skip = ? WHERE id = ?", (intro, outro, show_id))
+    conn.commit()
+    conn.close()
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Show not found")
+    return {"intro_skip": intro, "outro_skip": outro}
 
 
 @app.delete("/api/shows/{show_id}")

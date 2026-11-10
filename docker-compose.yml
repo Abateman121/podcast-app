@@ -1,6 +1,7 @@
 services:
   podcast-app:
-    build: .
+    image: ghcr.io/abateman121/podcast-app:latest
+    pull_policy: always
     container_name: podcast-app
     restart: unless-stopped
     runtime: nvidia

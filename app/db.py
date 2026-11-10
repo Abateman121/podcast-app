@@ -60,8 +60,9 @@ def init():
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
     show_cols = [r["name"] for r in conn.execute("PRAGMA table_info(shows)").fetchall()]
-    if "auto_latest" not in show_cols:
-        conn.execute("ALTER TABLE shows ADD COLUMN auto_latest INTEGER")
+    for column in ("auto_latest", "intro_skip", "outro_skip"):
+        if column not in show_cols:
+            conn.execute(f"ALTER TABLE shows ADD COLUMN {column} INTEGER")
     # Anything mid-flight when the container stopped goes back a step.
     conn.execute("UPDATE episodes SET status = 'queued' WHERE status = 'downloading'")
     conn.execute("UPDATE episodes SET status = 'downloaded' WHERE status = 'scanning'")
