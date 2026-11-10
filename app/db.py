@@ -5,6 +5,11 @@ DATA_DIR = os.environ.get("DATA_DIR", "/data")
 DB_PATH = os.path.join(DATA_DIR, "podcasts.db")
 AUDIO_DIR = os.path.join(DATA_DIR, "audio")
 
+# Episode status flow:
+# new -> queued -> downloading -> downloaded -> scanning -> ready
+# error (download failed), scan_error (downloaded but ad scan failed)
+PLAYABLE = ("downloaded", "scanning", "ready", "scan_error")
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS shows (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,6 +51,13 @@ def connect():
 def init():
     os.makedirs(AUDIO_DIR, exist_ok=True)
     conn = connect()
+    conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
+    show_cols = [r["name"] for r in conn.execute("PRAGMA table_info(shows)").fetchall()]
+    if "auto_latest" not in show_cols:
+        conn.execute("ALTER TABLE shows ADD COLUMN auto_latest INTEGER")
+    # Anything mid-flight when the container stopped goes back a step.
+    conn.execute("UPDATE episodes SET status = 'queued' WHERE status = 'downloading'")
+    conn.execute("UPDATE episodes SET status = 'downloaded' WHERE status = 'scanning'")
     conn.commit()
     conn.close()

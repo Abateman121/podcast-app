@@ -37,11 +37,21 @@ dialog input,dialog select{width:100%}
 .ctl button{min-width:44px;min-height:40px}
 #play{background:var(--acc);color:var(--accink);border:0;border-radius:50%;width:48px;height:48px;font-size:20px;cursor:pointer}
 .tm{font-size:13px;color:var(--mute);font-variant-numeric:tabular-nums}
+.pb{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:6px}
+.pb>i{display:block;height:100%;background:var(--acc);width:0}
+.pb.ind>i{width:35%;animation:slide 1.2s ease-in-out infinite alternate}
+@keyframes slide{from{margin-left:0}to{margin-left:65%}}
+@media(prefers-reduced-motion:reduce){.pb.ind>i{animation:none;margin-left:30%}}
+.msg{color:var(--mute);font-size:14px;margin:6px 0;min-height:20px}
+.msg.bad{color:#c0392b}
+.qrow{padding:12px;background:var(--card);border-bottom:1px solid var(--line)}
+.qrow .t{font-weight:600}.qrow .s{color:var(--mute);font-size:14px}
+.qrow .top{display:flex;justify-content:space-between;gap:10px;align-items:center}
 </style>
 </head>
 <body>
 <header><nav id="tabs">
-  <button data-t="pl" class="on">Playlists</button><button data-t="sh">Shows</button>
+  <button data-t="pl" class="on">Playlists</button><button data-t="sh">Shows</button><button data-t="qu">Queue</button>
 </nav></header>
 <main id="main"></main>
 
@@ -86,7 +96,9 @@ const post = (url, body) => api(url, {method:'POST', headers:{'Content-Type':'ap
 
 function epRow(e, idx) {
   const mins = e.duration ? Math.round(e.duration/60) + ' min' : '';
-  const state = e.playable ? (e.ads.length ? e.ads.length + ' ad' + (e.ads.length > 1 ? 's' : '') + ' found' : (e.status === 'ready' ? 'no ads found' : 'scanning soon')) : 'not downloaded';
+  const labels = {queued: 'in download queue', downloading: 'downloading', downloaded: 'waiting to scan', scanning: 'scanning for ads',
+    error: 'download failed', scan_error: 'ad scan failed', new: 'not downloaded'};
+  const state = e.status === 'ready' ? (e.ads.length ? e.ads.length + ' ad' + (e.ads.length > 1 ? 's' : '') + ' found' : 'no ads found') : (labels[e.status] || e.status);
   const img = e.show_image ? `<img src="${esc(e.show_image)}" alt="">` : '<div class="ph"></div>';
   return `<div class="row ${e.played ? 'played' : ''}" data-i="${idx}">${img}<div><div class="t">${esc(e.title)}</div>
     <div class="s">${esc(e.show_title)} &middot; ${mins} &middot; ${state}</div></div></div>`;
@@ -123,18 +135,35 @@ async function showShows(showId) {
     $('#bk').onclick = () => showShows();
     document.querySelectorAll('.row').forEach(r => r.onclick = async () => {
       const e = eps[+r.dataset.i];
-      if (!e.playable) { await post(`/api/episodes/${e.id}/download`); alert('Queued. It will download and be scanned for ads shortly.'); return; }
+      if (!e.playable) { if (['queued','downloading'].includes(e.status)) { alert('Already in the download queue. Check the Queue tab.'); return; }
+        await post(`/api/episodes/${e.id}/download`); alert('Added to the download queue. Watch it on the Queue tab.'); showShows(showId); return; }
       queue = eps; play(+r.dataset.i); });
     return;
   }
   const shows = await api('/api/shows');
-  let html = `<div class="bar"><input id="feed" type="url" placeholder="Paste a podcast RSS feed URL"><button class="p" id="addf">Add show</button></div>`;
-  if (!shows.length) html += `<div class="empty">No shows yet. Paste an RSS feed URL above.</div>`;
+  let html = `<div class="bar"><input id="feed" type="text" placeholder="Paste a link: RSS, Apple Podcasts, Spotify, Amazon, or YouTube"><button class="p" id="addf">Add show</button></div>
+    <div class="bar"><button class="g" id="opmlbtn">Import OPML file</button><input id="opml" type="file" accept=".opml,.xml,text/xml" hidden></div>
+    <div class="msg" id="smsg"></div>`;
+  if (!shows.length) html += `<div class="empty">No shows yet. Paste a link above or import an OPML file.</div>`;
   html += shows.map(s => `<div class="row" data-s="${s.id}">${s.image ? `<img src="${esc(s.image)}" alt="">` : '<div class="ph"></div>'}
-    <div><div class="t">${esc(s.title || s.feed_url)}</div></div></div>`).join('');
+    <div style="flex:1;min-width:0"><div class="t">${esc(s.title || s.feed_url)}</div></div>
+    <button class="g" data-delshow="${s.id}" data-name="${esc(s.title || s.feed_url)}">Delete</button></div>`).join('');
   $('#main').innerHTML = html;
-  $('#addf').onclick = async () => { const u = $('#feed').value.trim(); if (!u) return;
-    try { await post('/api/shows', {feed_url: u}); showShows(); } catch (e) { alert('Could not add that feed.'); } };
+  const say = (m, bad) => { const el = $('#smsg'); el.textContent = m; el.className = 'msg' + (bad ? ' bad' : ''); };
+  const addFeed = async () => { const u = $('#feed').value.trim(); if (!u) return;
+    say('Adding...'); $('#addf').disabled = true;
+    try { const r = await post('/api/shows', {url: u}); await showShows(); $('#smsg').textContent = r.note || ('Added ' + (r.title || 'show') + '.'); }
+    catch (e) { say(readErr(e), true); $('#addf').disabled = false; } };
+  $('#addf').onclick = addFeed;
+  $('#feed').onkeydown = ev => { if (ev.key === 'Enter') addFeed(); };
+  $('#opmlbtn').onclick = () => $('#opml').click();
+  $('#opml').onchange = async ev => { const f = ev.target.files[0]; if (!f) return; say('Importing...');
+    try { const r = await api('/api/import/opml', {method: 'POST', headers: {'Content-Type': 'text/xml'}, body: await f.text()});
+      await showShows(); $('#smsg').textContent = 'Imported ' + r.added + ' new shows (' + r.skipped + ' already added). The newest episode of each is queued.'; }
+    catch (e) { say(readErr(e), true); } };
+  document.querySelectorAll('[data-delshow]').forEach(b => b.onclick = async ev => { ev.stopPropagation();
+    if (!confirm('Delete "' + b.dataset.name + '" and its downloaded audio?')) return;
+    await api('/api/shows/' + b.dataset.delshow, {method: 'DELETE'}); showShows(); });
   document.querySelectorAll('[data-s]').forEach(r => r.onclick = () => showShows(r.dataset.s));
 }
 
@@ -152,7 +181,38 @@ $('#plform').addEventListener('submit', async ev => {
   render();
 });
 
-function render() { tab === 'pl' ? showPlaylists() : showShows(); }
+const readErr = e => { try { return JSON.parse(e.message).detail || e.message; } catch (_) { return e.message; } };
+const mb = b => (b / 1048576).toFixed(b > 10485760 ? 0 : 1) + ' MB';
+
+function drawQueue(q) {
+  if (!q.length) { $('#main').innerHTML = '<div class="empty">Nothing in the queue. Episodes appear here while they download and scan.</div>'; return; }
+  const names = {queued: 'Waiting to download', downloading: 'Downloading', downloaded: 'Waiting to scan', scanning: 'Scanning for ads',
+    error: 'Download failed', scan_error: 'Ad scan failed'};
+  $('#main').innerHTML = q.map(x => {
+    const bad = x.status === 'error' || x.status === 'scan_error';
+    let detail = names[x.status];
+    if (x.fraction != null) detail += ' ' + Math.round(x.fraction * 100) + '%';
+    if (x.status === 'downloading' && x.total) detail += ' (' + mb(x.done) + ' of ' + mb(x.total) + ')';
+    if (x.status === 'downloading' && !x.total && x.done) detail += ' (' + mb(x.done) + ')';
+    const active = x.status === 'downloading' || x.status === 'scanning';
+    const bar = active ? `<div class="pb ${x.fraction == null ? 'ind' : ''}"><i style="width:${x.fraction == null ? '' : Math.round(x.fraction * 100) + '%'}"></i></div>` : '';
+    const retry = bad ? `<button class="g" data-retry="${x.id}">Retry</button>` : '';
+    const err = bad && x.error ? `<div class="s">${esc(x.error)}</div>` : '';
+    return `<div class="qrow"><div class="top"><div style="min-width:0"><div class="t">${esc(x.title)}</div>
+      <div class="s">${esc(x.show_title)} &middot; ${detail}</div></div>${retry}</div>${bar}${err}</div>`;
+  }).join('');
+  document.querySelectorAll('[data-retry]').forEach(b => b.onclick = async () => { await post('/api/episodes/' + b.dataset.retry + '/retry'); pollQueue(); });
+}
+async function pollQueue() {
+  try {
+    const q = await api('/api/queue');
+    const busy = q.filter(x => x.status !== 'error' && x.status !== 'scan_error').length;
+    document.querySelector('[data-t="qu"]').textContent = busy ? 'Queue (' + busy + ')' : 'Queue';
+    if (tab === 'qu') drawQueue(q);
+  } catch (e) { /* server restarting, try again next tick */ }
+}
+function render() { tab === 'pl' ? showPlaylists() : tab === 'sh' ? showShows() : pollQueue(); }
+setInterval(pollQueue, 2500);
 $('#tabs').onclick = ev => { const b = ev.target.closest('button'); if (!b) return; tab = b.dataset.t;
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b)); render(); };
 

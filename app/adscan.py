@@ -61,10 +61,13 @@ def find_ad_ranges(segments):
     return result
 
 
-def scan(file_path):
+def scan(file_path, on_progress=None):
     model = get_model()
-    seg_iter, _info = model.transcribe(file_path, beam_size=1, vad_filter=True)
+    seg_iter, info = model.transcribe(file_path, beam_size=1, vad_filter=True)
+    total = float(getattr(info, "duration", 0) or 0)
     segments = []
     for seg in seg_iter:
         segments.append({"start": seg.start, "end": seg.end, "text": seg.text})
+        if on_progress and total > 0:
+            on_progress(min(1.0, seg.end / total))
     return find_ad_ranges(segments)

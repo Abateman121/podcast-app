@@ -1,73 +1,29 @@
 import json
 import os
-import threading
 import time
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-import adscan
 import db
 import feeds
+import sources
+import workers
+from progress import ERRORS, PROGRESS
 
-REFRESH_MINUTES = int(os.environ.get("REFRESH_MINUTES", "30"))
-AUTO_DOWNLOAD_LATEST = int(os.environ.get("AUTO_DOWNLOAD_LATEST", "3"))
-PLAYABLE = "('downloaded', 'ready')"
+PLAYABLE_SQL = "(" + ",".join(f"'{s}'" for s in db.PLAYABLE) + ")"
+QUEUE_STATUSES = ("queued", "downloading", "downloaded", "scanning", "error", "scan_error")
 
 app = FastAPI(title="Podcast App")
-wake = threading.Event()
-
-
-# ---------- background worker ----------
-
-def run_cycle():
-    print("[1/3] Refreshing feeds")
-    feeds.refresh_all()
-    conn = db.connect()
-    todo = feeds.episodes_to_download(conn, AUTO_DOWNLOAD_LATEST)
-    print(f"[2/3] Downloading {len(todo)} episodes")
-    for i, episode_id in enumerate(todo, 1):
-        try:
-            print(f"    ({i}/{len(todo)}) episode {episode_id}")
-            feeds.download_episode(conn, episode_id)
-        except Exception as exc:
-            print(f"    download error {episode_id}: {exc}")
-            conn.execute("UPDATE episodes SET status = 'error' WHERE id = ?", (episode_id,))
-            conn.commit()
-    pending = conn.execute("SELECT id, file_path FROM episodes WHERE status = 'downloaded'").fetchall()
-    print(f"[3/3] Scanning {len(pending)} episodes for ads")
-    for i, row in enumerate(pending, 1):
-        try:
-            print(f"    ({i}/{len(pending)}) episode {row['id']}")
-            ranges = adscan.scan(row["file_path"])
-            conn.execute(
-                "UPDATE episodes SET ads_json = ?, status = 'ready' WHERE id = ?",
-                (json.dumps(ranges), row["id"]),
-            )
-            conn.commit()
-        except Exception as exc:
-            print(f"    scan error {row['id']}: {exc}")
-            conn.execute("UPDATE episodes SET status = 'ready' WHERE id = ?", (row["id"],))
-            conn.commit()
-    conn.close()
-
-
-def worker_loop():
-    while True:
-        try:
-            run_cycle()
-        except Exception as exc:
-            print(f"cycle error: {exc}")
-        wake.wait(timeout=REFRESH_MINUTES * 60)
-        wake.clear()
 
 
 @app.on_event("startup")
 def startup():
     db.init()
-    threading.Thread(target=worker_loop, daemon=True).start()
+    if os.environ.get("DISABLE_WORKERS") != "1":
+        workers.start()
 
 
 # ---------- helpers ----------
@@ -75,7 +31,7 @@ def startup():
 def episode_dict(row):
     d = dict(row)
     d["ads"] = json.loads(d.pop("ads_json") or "[]")
-    d["playable"] = d["status"] in ("downloaded", "ready")
+    d["playable"] = d["status"] in db.PLAYABLE
     d.pop("file_path", None)
     return d
 
@@ -87,7 +43,7 @@ EP_COLS = (
 
 
 def playlist_query(rules):
-    where = [f"e.status IN {PLAYABLE}"]
+    where = [f"e.status IN {PLAYABLE_SQL}"]
     params = []
     if rules.get("show_ids"):
         marks = ",".join("?" for _ in rules["show_ids"])
@@ -114,10 +70,10 @@ def playlist_query(rules):
     return sql, params
 
 
-# ---------- API ----------
+# ---------- models ----------
 
-class FeedIn(BaseModel):
-    feed_url: str
+class UrlIn(BaseModel):
+    url: str
 
 
 class ProgressIn(BaseModel):
@@ -130,6 +86,8 @@ class PlaylistIn(BaseModel):
     rules: dict
 
 
+# ---------- shows ----------
+
 @app.get("/api/shows")
 def list_shows():
     conn = db.connect()
@@ -139,20 +97,39 @@ def list_shows():
 
 
 @app.post("/api/shows")
-def add_show(body: FeedIn):
-    show_id = feeds.add_feed(body.feed_url.strip())
-    wake.set()
-    return {"id": show_id}
+def add_show(body: UrlIn):
+    try:
+        result = feeds.add_show_from_url(body.url)
+    except sources.SourceError as exc:
+        raise HTTPException(400, str(exc))
+    workers.wake.set()
+    return result
 
 
 @app.delete("/api/shows/{show_id}")
 def delete_show(show_id: int):
     conn = db.connect()
+    removed = feeds.delete_show_files(conn, show_id)
     conn.execute("DELETE FROM shows WHERE id = ?", (show_id,))
     conn.commit()
     conn.close()
-    return {"ok": True}
+    return {"ok": True, "files_removed": removed}
 
+
+@app.post("/api/import/opml")
+async def import_opml(request: Request):
+    text = (await request.body()).decode("utf-8", errors="replace")
+    try:
+        result = feeds.import_opml_text(text)
+    except Exception:
+        raise HTTPException(400, "That file is not a valid OPML file.")
+    if result["total"] == 0:
+        raise HTTPException(400, "No podcast feeds were found in that OPML file.")
+    workers.wake.set()
+    return result
+
+
+# ---------- episodes and queue ----------
 
 @app.get("/api/episodes")
 def list_episodes(show_id: int, limit: int = 100):
@@ -169,11 +146,51 @@ def list_episodes(show_id: int, limit: int = 100):
 @app.post("/api/episodes/{episode_id}/download")
 def want_episode(episode_id: int):
     conn = db.connect()
-    conn.execute("UPDATE episodes SET wanted = 1 WHERE id = ?", (episode_id,))
+    conn.execute("UPDATE episodes SET status = 'queued' WHERE id = ? AND status IN ('new', 'error')", (episode_id,))
     conn.commit()
     conn.close()
-    wake.set()
     return {"ok": True}
+
+
+@app.post("/api/episodes/{episode_id}/retry")
+def retry_episode(episode_id: int):
+    ERRORS.pop(episode_id, None)
+    conn = db.connect()
+    conn.execute("UPDATE episodes SET status = 'queued' WHERE id = ? AND status = 'error'", (episode_id,))
+    conn.execute("UPDATE episodes SET status = 'downloaded' WHERE id = ? AND status = 'scan_error'", (episode_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.get("/api/queue")
+def queue():
+    marks = ",".join("?" for _ in QUEUE_STATUSES)
+    conn = db.connect()
+    rows = conn.execute(
+        f"SELECT e.id, e.title, s.title AS show_title, e.status FROM episodes e JOIN shows s ON s.id = e.show_id "
+        f"WHERE e.status IN ({marks}) "
+        "ORDER BY CASE e.status WHEN 'downloading' THEN 0 WHEN 'scanning' THEN 1 WHEN 'queued' THEN 2 "
+        "WHEN 'downloaded' THEN 3 ELSE 4 END, e.published DESC LIMIT 200",
+        QUEUE_STATUSES,
+    ).fetchall()
+    conn.close()
+    items = []
+    for r in rows:
+        item = dict(r)
+        info = PROGRESS.get(r["id"], {})
+        done, total = info.get("done"), info.get("total")
+        if "fraction" in info:
+            item["fraction"] = info["fraction"]
+        elif total:
+            item["fraction"] = min(1.0, done / total)
+        else:
+            item["fraction"] = None
+        item["done"] = done
+        item["total"] = total
+        item["error"] = ERRORS.get(r["id"])
+        items.append(item)
+    return items
 
 
 @app.post("/api/episodes/{episode_id}/progress")
@@ -187,6 +204,8 @@ def save_progress(episode_id: int, body: ProgressIn):
     conn.close()
     return {"ok": True}
 
+
+# ---------- playlists ----------
 
 @app.get("/api/playlists")
 def list_playlists():
@@ -230,7 +249,7 @@ def playlist_episodes(playlist_id: int):
 
 @app.post("/api/refresh")
 def refresh_now():
-    wake.set()
+    workers.wake.set()
     return {"ok": True}
 
 
