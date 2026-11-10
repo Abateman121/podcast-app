@@ -1,4 +1,4 @@
-# podcast-app
+# podcast-app *AI SLOP*
 
 A self-hosted podcast app for myself. It pulls in shows from almost any link, downloads the latest episodes, transcribes them on the GPU, and automatically skips the ads while you listen.
 
