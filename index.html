@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14171c">
+<title>Podcasts</title>
+<style>
+:root{--bg:#eef0f2;--card:#fff;--ink:#15181c;--mute:#667080;--line:#d9dde2;--acc:#e8700c;--accink:#fff}
+@media(prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1c2027;--ink:#e9ecef;--mute:#8b94a1;--line:#2a2f38;--acc:#ff8a2b;--accink:#14171c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:150px}
+header{position:sticky;top:0;background:var(--bg);padding:max(12px,env(safe-area-inset-top)) 16px 0;z-index:5}
+nav{display:flex;gap:4px;border-bottom:1px solid var(--line)}
+nav button{background:none;border:0;color:var(--mute);font:inherit;font-weight:600;padding:10px 14px;border-bottom:3px solid transparent;cursor:pointer}
+nav button.on{color:var(--ink);border-color:var(--acc)}
+main{max-width:760px;margin:0 auto;padding:12px 16px}
+.row{display:flex;gap:12px;align-items:center;padding:12px;background:var(--card);border-bottom:1px solid var(--line);cursor:pointer}
+.row img,.ph{width:52px;height:52px;border-radius:8px;object-fit:cover;background:var(--line);flex:none}
+.row .t{font-weight:600}.row .s{color:var(--mute);font-size:14px}
+.row.played .t{color:var(--mute)}
+.bar{display:flex;gap:8px;margin:10px 0}
+input,select{font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);min-width:0}
+input[type=text],input[type=url]{flex:1}
+button.p{background:var(--acc);color:var(--accink);border:0;border-radius:8px;padding:9px 14px;font:inherit;font-weight:600;cursor:pointer}
+button.g{background:none;border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:8px 12px;font:inherit;cursor:pointer}
+.empty{color:var(--mute);padding:28px 4px}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);width:min(420px,92vw)}
+dialog label{display:block;margin:10px 0 4px;font-size:14px;color:var(--mute)}
+dialog input,dialog select{width:100%}
+#player{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);padding:10px 16px max(10px,env(safe-area-inset-bottom))}
+#player .in{max-width:760px;margin:0 auto}
+#now{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sub{color:var(--mute);font-size:13px;height:18px}
+#seek{width:100%;accent-color:var(--acc);margin:6px 0}
+.ctl{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.ctl button{min-width:44px;min-height:40px}
+#play{background:var(--acc);color:var(--accink);border:0;border-radius:50%;width:48px;height:48px;font-size:20px;cursor:pointer}
+.tm{font-size:13px;color:var(--mute);font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<header><nav id="tabs">
+  <button data-t="pl" class="on">Playlists</button><button data-t="sh">Shows</button>
+</nav></header>
+<main id="main"></main>
+
+<dialog id="dlg"><form method="dialog" id="plform">
+  <h3 style="margin:0 0 4px">New smart playlist</h3>
+  <label>Name</label><input id="pn" required>
+  <label>Shows (none selected means all)</label><select id="ps" multiple size="4"></select>
+  <label>Max length (minutes, optional)</label><input id="pm" type="number" min="1">
+  <label>Only from the last (days, optional)</label><input id="pd" type="number" min="1">
+  <label>Order</label><select id="po"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select>
+  <label><input id="pu" type="checkbox" checked style="width:auto"> Unplayed only</label>
+  <div class="bar" style="justify-content:flex-end"><button class="g" value="cancel">Cancel</button><button class="p" value="ok">Save playlist</button></div>
+</form></dialog>
+
+<div id="player"><div class="in">
+  <div id="now">Nothing playing</div><div id="sub"></div>
+  <input id="seek" type="range" min="0" max="1000" value="0">
+  <div class="ctl">
+    <span class="tm" id="cur">0:00</span>
+    <button class="g" id="back">-15</button>
+    <button id="play">&#9654;</button>
+    <button class="g" id="fwd">+30</button>
+    <button class="g" id="spd">1.0x</button>
+    <button class="g" id="skipad" title="Skip detected ads">Ads: on</button>
+    <span class="tm" id="rem">0:00</span>
+  </div>
+</div></div>
+<audio id="au" preload="auto"></audio>
+
+<script>
+const $ = s => document.querySelector(s);
+const au = $('#au');
+let queue = [], qi = -1, tab = 'pl', skipAds = true, lastSave = 0;
+const speeds = [1, 1.25, 1.5, 1.75, 2, 0.8];
+let si = 0;
+
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = s => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60;
+  return (h ? h + ':' + String(m).padStart(2,'0') : m) + ':' + String(x).padStart(2,'0'); };
+const api = async (url, opt) => { const r = await fetch(url, opt); if (!r.ok) throw new Error(await r.text()); return r.json(); };
+const post = (url, body) => api(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})});
+
+function epRow(e, idx) {
+  const mins = e.duration ? Math.round(e.duration/60) + ' min' : '';
+  const state = e.playable ? (e.ads.length ? e.ads.length + ' ad' + (e.ads.length > 1 ? 's' : '') + ' found' : (e.status === 'ready' ? 'no ads found' : 'scanning soon')) : 'not downloaded';
+  const img = e.show_image ? `<img src="${esc(e.show_image)}" alt="">` : '<div class="ph"></div>';
+  return `<div class="row ${e.played ? 'played' : ''}" data-i="${idx}">${img}<div><div class="t">${esc(e.title)}</div>
+    <div class="s">${esc(e.show_title)} &middot; ${mins} &middot; ${state}</div></div></div>`;
+}
+
+async function showPlaylists() {
+  const pls = await api('/api/playlists');
+  let html = `<div class="bar"><button class="p" id="newpl">New smart playlist</button><button class="g" id="refresh">Check for episodes</button></div>`;
+  if (!pls.length) html += `<div class="empty">No playlists yet. Create one with rules like unplayed episodes under 45 minutes.</div>`;
+  for (const p of pls) {
+    const eps = await api(`/api/playlists/${p.id}/episodes`);
+    html += `<h3 style="margin:18px 0 6px">${esc(p.name)} <span class="s" style="font-weight:400;color:var(--mute)">${eps.length} episodes</span>
+      <button class="g" data-del="${p.id}" style="float:right">Delete</button></h3>`;
+    html += eps.map((e, i) => epRow(e, p.id + ':' + i)).join('') || `<div class="empty">Nothing matches yet.</div>`;
+    p.eps = eps;
+  }
+  $('#main').innerHTML = html;
+  window._pl = pls;
+  $('#newpl').onclick = openDialog;
+  $('#refresh').onclick = () => post('/api/refresh');
+  document.querySelectorAll('[data-del]').forEach(b => b.onclick = async ev => { ev.stopPropagation();
+    if (confirm('Delete this playlist?')) { await api('/api/playlists/' + b.dataset.del, {method:'DELETE'}); render(); } });
+  document.querySelectorAll('.row').forEach(r => r.onclick = () => {
+    const [pid, i] = r.dataset.i.split(':').map(Number);
+    const p = window._pl.find(x => x.id === pid); queue = p.eps; play(i); });
+}
+
+async function showShows(showId) {
+  if (showId) {
+    const eps = await api('/api/episodes?show_id=' + showId);
+    let html = `<div class="bar"><button class="g" id="bk">Back to shows</button></div>`;
+    html += eps.map((e, i) => epRow(e, i)).join('');
+    $('#main').innerHTML = html;
+    $('#bk').onclick = () => showShows();
+    document.querySelectorAll('.row').forEach(r => r.onclick = async () => {
+      const e = eps[+r.dataset.i];
+      if (!e.playable) { await post(`/api/episodes/${e.id}/download`); alert('Queued. It will download and be scanned for ads shortly.'); return; }
+      queue = eps; play(+r.dataset.i); });
+    return;
+  }
+  const shows = await api('/api/shows');
+  let html = `<div class="bar"><input id="feed" type="url" placeholder="Paste a podcast RSS feed URL"><button class="p" id="addf">Add show</button></div>`;
+  if (!shows.length) html += `<div class="empty">No shows yet. Paste an RSS feed URL above.</div>`;
+  html += shows.map(s => `<div class="row" data-s="${s.id}">${s.image ? `<img src="${esc(s.image)}" alt="">` : '<div class="ph"></div>'}
+    <div><div class="t">${esc(s.title || s.feed_url)}</div></div></div>`).join('');
+  $('#main').innerHTML = html;
+  $('#addf').onclick = async () => { const u = $('#feed').value.trim(); if (!u) return;
+    try { await post('/api/shows', {feed_url: u}); showShows(); } catch (e) { alert('Could not add that feed.'); } };
+  document.querySelectorAll('[data-s]').forEach(r => r.onclick = () => showShows(r.dataset.s));
+}
+
+async function openDialog() {
+  const shows = await api('/api/shows');
+  $('#ps').innerHTML = shows.map(s => `<option value="${s.id}">${esc(s.title || s.feed_url)}</option>`).join('');
+  $('#dlg').showModal();
+}
+$('#plform').addEventListener('submit', async ev => {
+  if (ev.submitter && ev.submitter.value === 'cancel') return;
+  const rules = { show_ids: [...$('#ps').selectedOptions].map(o => +o.value), unplayed_only: $('#pu').checked, sort: $('#po').value };
+  if ($('#pm').value) rules.max_minutes = +$('#pm').value;
+  if ($('#pd').value) rules.newer_than_days = +$('#pd').value;
+  await post('/api/playlists', {name: $('#pn').value, rules});
+  render();
+});
+
+function render() { tab === 'pl' ? showPlaylists() : showShows(); }
+$('#tabs').onclick = ev => { const b = ev.target.closest('button'); if (!b) return; tab = b.dataset.t;
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b)); render(); };
+
+// ---- player ----
+function play(i) {
+  qi = i; const e = queue[i]; if (!e) return;
+  au.src = '/audio/' + e.id;
+  au.playbackRate = speeds[si];
+  au.onloadedmetadata = () => { if (e.position > 5 && e.position < au.duration - 10) au.currentTime = e.position; };
+  au.play();
+  $('#now').textContent = e.title; $('#sub').textContent = e.show_title;
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({title: e.title, artist: e.show_title, artwork: e.show_image ? [{src: e.show_image}] : []});
+    navigator.mediaSession.setActionHandler('play', () => au.play());
+    navigator.mediaSession.setActionHandler('pause', () => au.pause());
+    navigator.mediaSession.setActionHandler('seekbackward', () => au.currentTime -= 15);
+    navigator.mediaSession.setActionHandler('seekforward', () => au.currentTime += 30);
+    navigator.mediaSession.setActionHandler('nexttrack', () => play(qi + 1));
+  }
+}
+function save(done) {
+  const e = queue[qi]; if (!e || !isFinite(au.currentTime)) return;
+  e.position = au.currentTime; if (done) e.played = 1;
+  post(`/api/episodes/${e.id}/progress`, {position: au.currentTime, played: !!done}).catch(() => {});
+}
+let toastT;
+function toast(msg) { $('#sub').textContent = msg; clearTimeout(toastT);
+  toastT = setTimeout(() => { const e = queue[qi]; if (e) $('#sub').textContent = e.show_title; }, 3000); }
+
+au.ontimeupdate = () => {
+  const e = queue[qi]; if (!e) return;
+  if (skipAds) for (const [s, t] of e.ads) if (au.currentTime >= s && au.currentTime < t - 0.5) {
+    au.currentTime = t; toast('Skipped ad (' + Math.round(t - s) + 's)'); break; }
+  $('#seek').value = au.duration ? (au.currentTime / au.duration) * 1000 : 0;
+  $('#cur').textContent = fmt(au.currentTime);
+  $('#rem').textContent = '-' + fmt((au.duration - au.currentTime) / au.playbackRate);
+  if (Date.now() - lastSave > 5000) { lastSave = Date.now(); save(false); }
+};
+au.onplay = () => $('#play').innerHTML = '&#10074;&#10074;';
+au.onpause = () => { $('#play').innerHTML = '&#9654;'; save(false); };
+au.onended = () => { save(true); if (qi + 1 < queue.length) play(qi + 1); };
+$('#play').onclick = () => au.paused ? au.play() : au.pause();
+$('#back').onclick = () => au.currentTime -= 15;
+$('#fwd').onclick = () => au.currentTime += 30;
+$('#seek').oninput = ev => { if (au.duration) au.currentTime = (ev.target.value / 1000) * au.duration; };
+$('#spd').onclick = () => { si = (si + 1) % speeds.length; au.playbackRate = speeds[si]; $('#spd').textContent = speeds[si].toFixed(2).replace(/0$/, '') + 'x'; };
+$('#skipad').onclick = () => { skipAds = !skipAds; $('#skipad').textContent = 'Ads: ' + (skipAds ? 'on' : 'off'); };
+window.addEventListener('pagehide', () => save(false));
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+services:
+  podcast-app:
+    build: .
+    container_name: podcast-app
+    restart: unless-stopped
+    runtime: nvidia
+    ports:
+      - "8099:8099"
+    volumes:
+      - /mnt/cache/appdata/podcast-app:/data
+    environment:
+      TZ: "America/Los_Angeles"
+      HOST_OS: "Unraid"
+      HOST_HOSTNAME: "Tower"
+      HOST_CONTAINERNAME: "podcast-app"
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+      WHISPER_MODEL: "small.en"
+      WHISPER_DEVICE: "cuda"
+      WHISPER_COMPUTE: "int8"
+      REFRESH_MINUTES: "30"
+      AUTO_DOWNLOAD_LATEST: "3"
+    labels:
+      net.unraid.docker.managed: "dockerman"
+      net.unraid.docker.webui: "http://[IP]:[PORT:8099]/"
+      net.unraid.docker.icon: "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/audiobookshelf.png"
+      folder.view2: "Media"
