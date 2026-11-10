@@ -9,7 +9,7 @@
 :root{--bg:#eef0f2;--card:#fff;--ink:#15181c;--mute:#667080;--line:#d9dde2;--acc:#e8700c;--accink:#fff}
 @media(prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1c2027;--ink:#e9ecef;--mute:#8b94a1;--line:#2a2f38;--acc:#ff8a2b;--accink:#14171c}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:150px}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:165px}
 header{position:sticky;top:0;background:var(--bg);padding:max(12px,env(safe-area-inset-top)) 16px 0;z-index:5}
 nav{display:flex;gap:4px;border-bottom:1px solid var(--line)}
 nav button{background:none;border:0;color:var(--mute);font:inherit;font-weight:600;padding:10px 14px;border-bottom:3px solid transparent;cursor:pointer}
@@ -32,6 +32,7 @@ dialog input,dialog select{width:100%}
 #player .in{max-width:760px;margin:0 auto}
 #now{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #sub{color:var(--mute);font-size:13px;height:18px}
+#ver{text-align:right;font-size:11px;color:var(--mute);margin-top:2px;font-variant-numeric:tabular-nums}
 #seek{width:100%;accent-color:var(--acc);margin:6px 0}
 .ctl{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap}
 .skipbar{align-items:center;flex-wrap:wrap}.skipbar label{font-size:14px;color:var(--mute)}.skipbar input{width:80px}
@@ -75,11 +76,12 @@ dialog input,dialog select{width:100%}
     <button class="g" id="back">-15</button>
     <button id="play">&#9654;</button>
     <button class="g" id="fwd">+30</button>
-    <button class="g" id="spd">1.0x</button>
+    <button class="g" id="spddn" title="Slower (0.05x)">&minus;</button><button class="g" id="spd" title="Tap to reset to 1.0x">1.0x</button><button class="g" id="spdup" title="Faster (0.05x)">+</button>
     <button class="g" id="skipad" title="Skip detected ads">Ads: on</button>
     <button class="g" id="skipio" title="Skip intro and outro">Intro/outro: on</button>
     <span class="tm" id="rem">0:00</span>
   </div>
+  <div id="ver">v0.0.13</div>
 </div></div>
 <audio id="au" preload="auto"></audio>
 
@@ -89,8 +91,8 @@ const au = $('#au');
 const loadFlag = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v === '1'; } catch (_) { return d; } };
 const saveFlag = (k, v) => { try { localStorage.setItem(k, v ? '1' : '0'); } catch (_) {} };
 let queue = [], qi = -1, tab = 'pl', skipAds = loadFlag('skipAds', true), skipIO = loadFlag('skipIO', true), lastSave = 0;
-const speeds = [1, 1.25, 1.5, 1.75, 2, 0.8];
-let si = 0;
+const SPEED_MIN = 0.5, SPEED_MAX = 3, SPEED_STEP = 0.05;
+let speed = 1;
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt = s => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60;
@@ -238,7 +240,7 @@ async function play(i) {
   qi = i; const e = queue[i]; if (!e) return;
   try { Object.assign(e, await api('/api/episodes/' + e.id)); } catch (_) { /* play with what we have */ }
   au.src = '/audio/' + e.id;
-  au.playbackRate = speeds[si];
+  au.playbackRate = speed;
   e._outroDone = false;
   au.onloadedmetadata = () => {
     let start = (e.position > 5 && e.position < au.duration - 10) ? e.position : 0;
@@ -283,7 +285,14 @@ $('#play').onclick = () => au.paused ? au.play() : au.pause();
 $('#back').onclick = () => au.currentTime -= 15;
 $('#fwd').onclick = () => au.currentTime += 30;
 $('#seek').oninput = ev => { if (au.duration) au.currentTime = (ev.target.value / 1000) * au.duration; };
-$('#spd').onclick = () => { si = (si + 1) % speeds.length; au.playbackRate = speeds[si]; $('#spd').textContent = speeds[si].toFixed(2).replace(/0$/, '') + 'x'; };
+const setSpeed = v => {
+  speed = Math.min(SPEED_MAX, Math.max(SPEED_MIN, Math.round(v * 100) / 100));   // round to hundredths to avoid float drift
+  au.playbackRate = speed;
+  $('#spd').textContent = speed.toFixed(2).replace(/0$/, '') + 'x';
+};
+$('#spddn').onclick = () => setSpeed(speed - SPEED_STEP);
+$('#spdup').onclick = () => setSpeed(speed + SPEED_STEP);
+$('#spd').onclick = () => setSpeed(1);
 const paintToggles = () => { $('#skipad').textContent = 'Ads: ' + (skipAds ? 'on' : 'off'); $('#skipio').textContent = 'Intro/outro: ' + (skipIO ? 'on' : 'off'); };
 $('#skipad').onclick = () => { skipAds = !skipAds; saveFlag('skipAds', skipAds); paintToggles(); };
 $('#skipio').onclick = () => { skipIO = !skipIO; saveFlag('skipIO', skipIO); paintToggles(); };
