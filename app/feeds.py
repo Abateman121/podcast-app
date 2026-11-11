@@ -60,12 +60,18 @@ def refresh_feed(conn, show_id, feed_url):
         if entry.get("published_parsed"):
             published = calendar.timegm(entry.published_parsed)
         duration = parse_duration(entry.get("itunes_duration"))
+        chapters_url = (entry.get("podcast_chapters") or {}).get("url")
         cur = conn.execute(
-            "INSERT OR IGNORE INTO episodes (show_id, guid, title, published, duration, audio_url) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (show_id, guid, entry.get("title", "Untitled"), published, duration, audio_url),
+            "INSERT OR IGNORE INTO episodes (show_id, guid, title, published, duration, audio_url, chapters_url) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (show_id, guid, entry.get("title", "Untitled"), published, duration, audio_url, chapters_url),
         )
         added += cur.rowcount
+        if chapters_url and not cur.rowcount:
+            conn.execute(
+                "UPDATE episodes SET chapters_url = ? WHERE show_id = ? AND guid = ? AND chapters_url IS NULL",
+                (chapters_url, show_id, guid),
+            )
     conn.commit()
     return added
 
@@ -207,4 +213,13 @@ def delete_show_files(conn, show_id):
         if r["file_path"] and os.path.exists(r["file_path"]):
             os.remove(r["file_path"])
             removed += 1
+    # Intro/outro template snippets and the audio of tagged ads go with the show.
+    for kind in ("intro", "outro"):
+        wav = db.template_path(show_id, kind)
+        if os.path.exists(wav):
+            os.remove(wav)
+    for tag in conn.execute("SELECT id FROM ad_tags WHERE show_id = ?", (show_id,)).fetchall():
+        wav = db.ad_sample_path(tag["id"])
+        if os.path.exists(wav):
+            os.remove(wav)
     return removed

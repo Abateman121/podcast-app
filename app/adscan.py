@@ -70,7 +70,44 @@ def close_block(block):
     return [round(start, 1), round(end, 1)]
 
 
-def find_ad_ranges(segments):
+def merge_ranges(ranges, gap=1.0):
+    """Join ranges that overlap or sit within gap seconds of each other."""
+    merged = []
+    for start, end in sorted(([float(a), float(b)] for a, b in ranges)):
+        if merged and start <= merged[-1][1] + gap:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [[round(s, 1), round(e, 1)] for s, e in merged]
+
+
+def tokens(text):
+    return re.findall(r"[a-z0-9']+", text.lower())
+
+
+def anchor_hits(segments, anchors):
+    """Segments that contain a phrase learned from a hand-tagged ad."""
+    hits = []
+    for seg in segments:
+        spoken = " " + " ".join(tokens(seg["text"])) + " "
+        for a in anchors:
+            if f" {a['phrase']} " in spoken:
+                hits.append({"start": round(seg["start"], 1), "phrase": a["phrase"], "lead": a["lead"], "tail": a["tail"]})
+    return hits
+
+
+def anchor_ranges(segments, anchors):
+    """Place an ad around each learned phrase, using the lead and tail of the ad it was learned from."""
+    ranges = []
+    for hit in anchor_hits(segments, anchors):
+        start = max(0.0, hit["start"] - hit["lead"])
+        end = hit["start"] + hit["tail"]
+        if MIN_AD_SECONDS <= end - start <= MAX_AD_SECONDS:
+            ranges.append([start, end])
+    return ranges
+
+
+def find_ad_ranges(segments, anchors=None):
     ranges = []
     block = None
     for seg in sorted(segments, key=lambda s: s["start"]):
@@ -93,6 +130,8 @@ def find_ad_ranges(segments):
         result = close_block(block)
         if result:
             ranges.append(result)
+    if anchors:
+        ranges = merge_ranges(ranges + anchor_ranges(segments, anchors))
     return ranges
 
 
@@ -105,8 +144,8 @@ def debug_hits(segments):
     return hits
 
 
-def scan(file_path, on_progress=None):
-    """Returns (ad_ranges, transcript_segments)."""
+def scan(file_path, on_progress=None, anchors=None):
+    """Returns (ad_ranges, transcript_segments). anchors are phrases learned from hand-tagged ads."""
     model = get_model()
     seg_iter, info = model.transcribe(file_path, beam_size=1, vad_filter=True)
     total = float(getattr(info, "duration", 0) or 0)
@@ -115,4 +154,4 @@ def scan(file_path, on_progress=None):
         segments.append({"start": round(seg.start, 2), "end": round(seg.end, 2), "text": seg.text})
         if on_progress and total > 0:
             on_progress(min(1.0, seg.end / total))
-    return find_ad_ranges(segments), segments
+    return find_ad_ranges(segments, anchors), segments

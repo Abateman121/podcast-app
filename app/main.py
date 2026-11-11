@@ -1,15 +1,18 @@
 import json
 import os
 import time
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import adlearn
 import adscan
 import db
 import feeds
+import markers
 import sources
 import workers
 from progress import ERRORS, PROGRESS
@@ -29,17 +32,26 @@ def startup():
 
 # ---------- helpers ----------
 
-def episode_dict(row):
+def episode_dict(row, tags=()):
     d = dict(row)
-    d["ads"] = json.loads(d.pop("ads_json") or "[]")
+    detected = json.loads(d.pop("ads_json") or "[]")
+    audio = json.loads(d.pop("ads_audio_json") or "[]")
+    d["ads"] = adlearn.effective_ads(detected, audio, tags)
+    d["markers"] = markers.player_markers(d.pop("markers_json", None))
     d["playable"] = d["status"] in db.PLAYABLE
     d.pop("file_path", None)
     return d
 
 
+def episodes_payload(conn, rows):
+    """Episode dicts with hand-tagged ads folded into the skip list."""
+    tags = adlearn.tags_by_episode(conn, [r["id"] for r in rows])
+    return [episode_dict(r, tags.get(r["id"], [])) for r in rows]
+
+
 EP_COLS = (
     "e.id, e.show_id, s.title AS show_title, s.image AS show_image, e.title, e.published, "
-    "e.duration, e.status, e.played, e.position, e.ads_json, e.file_path, "
+    "e.duration, e.status, e.played, e.position, e.ads_json, e.ads_audio_json, e.markers_json, e.file_path, "
     "COALESCE(s.intro_skip, 0) AS intro_skip, COALESCE(s.outro_skip, 0) AS outro_skip"
 )
 
@@ -83,6 +95,20 @@ class SkipsIn(BaseModel):
     outro_skip: int = 0
 
 
+class TemplatesIn(BaseModel):
+    episode_id: int
+    intro_start: Optional[float] = None
+    intro_end: Optional[float] = None
+    outro_start: Optional[float] = None
+    outro_end: Optional[float] = None
+
+
+class TagIn(BaseModel):
+    start: float
+    end: float
+    kind: str = "ad"
+
+
 class ProgressIn(BaseModel):
     position: float
     played: bool = False
@@ -100,7 +126,7 @@ def list_shows():
     conn = db.connect()
     rows = conn.execute(
         "SELECT id, title, image, feed_url, COALESCE(intro_skip, 0) AS intro_skip, "
-        "COALESCE(outro_skip, 0) AS outro_skip FROM shows ORDER BY title"
+        "COALESCE(outro_skip, 0) AS outro_skip, intro_template_len, outro_template_len FROM shows ORDER BY title"
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -129,11 +155,77 @@ def set_skips(show_id: int, body: SkipsIn):
     return {"intro_skip": intro, "outro_skip": outro}
 
 
+@app.post("/api/shows/{show_id}/templates")
+def set_templates(show_id: int, body: TemplatesIn):
+    """Create intro and/or outro templates from marks on one downloaded episode, then re-detect the whole show."""
+    conn = db.connect()
+    try:
+        ep = conn.execute(
+            "SELECT file_path FROM episodes WHERE id = ? AND show_id = ?", (body.episode_id, show_id)
+        ).fetchone()
+        if not ep or not ep["file_path"] or not os.path.exists(ep["file_path"]):
+            raise HTTPException(404, "That episode is not downloaded.")
+        todo = [
+            (kind, start, end)
+            for kind, start, end in (
+                ("intro", body.intro_start, body.intro_end),
+                ("outro", body.outro_start, body.outro_end),
+            )
+            if start is not None and end is not None
+        ]
+        if not todo:
+            raise HTTPException(400, "Mark a start and an end for the intro, the outro, or both.")
+        saved = []
+        try:
+            for kind, start, end in todo:
+                saved.append(markers.create_template(conn, show_id, kind, ep["file_path"], start, end))
+        except ValueError as exc:
+            if saved:
+                markers.queue_redetect(conn, show_id)
+                raise HTTPException(400, f"Saved the {saved[0]['kind']} template, but: {exc}")
+            raise HTTPException(400, str(exc))
+        return {"saved": saved, "queued": markers.queue_redetect(conn, show_id)}
+    finally:
+        conn.close()
+
+
+@app.delete("/api/shows/{show_id}/templates/{kind}")
+def delete_template(show_id: int, kind: str):
+    conn = db.connect()
+    try:
+        markers.delete_template(conn, show_id, kind)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    queued = markers.queue_redetect(conn, show_id)
+    conn.close()
+    return {"ok": True, "queued": queued}
+
+
+@app.post("/api/shows/{show_id}/redetect")
+def redetect_show(show_id: int):
+    """Redo intro/outro detection for a show. Uses the CPU only, never Whisper."""
+    conn = db.connect()
+    queued = markers.queue_redetect(conn, show_id)
+    conn.close()
+    return {"queued": queued}
+
+
+@app.get("/api/shows/{show_id}/ad-learning")
+def show_ad_learning(show_id: int):
+    conn = db.connect()
+    summary = adlearn.show_summary(conn, show_id)
+    conn.close()
+    return summary
+
+
 @app.delete("/api/shows/{show_id}")
 def delete_show(show_id: int):
     conn = db.connect()
     removed = feeds.delete_show_files(conn, show_id)
+    had_tags = conn.execute("SELECT 1 FROM ad_tags WHERE show_id = ? AND kind = 'ad' LIMIT 1", (show_id,)).fetchone()
     conn.execute("DELETE FROM shows WHERE id = ?", (show_id,))
+    if had_tags:
+        db.meta_bump(conn, adlearn.BANK_KEY)
     conn.commit()
     conn.close()
     return {"ok": True, "files_removed": removed}
@@ -162,8 +254,9 @@ def list_episodes(show_id: int, limit: int = 100):
         "WHERE e.show_id = ? ORDER BY e.published DESC LIMIT ?",
         (show_id, limit),
     ).fetchall()
+    payload = episodes_payload(conn, rows)
     conn.close()
-    return [episode_dict(r) for r in rows]
+    return payload
 
 
 @app.get("/api/episodes/{episode_id}")
@@ -172,10 +265,11 @@ def get_episode(episode_id: int):
     row = conn.execute(
         f"SELECT {EP_COLS} FROM episodes e JOIN shows s ON s.id = e.show_id WHERE e.id = ?", (episode_id,)
     ).fetchone()
+    payload = episodes_payload(conn, [row]) if row else None
     conn.close()
-    if not row:
+    if not payload:
         raise HTTPException(404, "Episode not found")
-    return episode_dict(row)
+    return payload[0]
 
 
 def load_transcript(episode_id):
@@ -193,7 +287,9 @@ def rescan_episode(episode_id: int):
     conn = db.connect()
     try:
         if segments is not None:
-            ranges = adscan.find_ad_ranges(segments)
+            show = conn.execute("SELECT show_id FROM episodes WHERE id = ?", (episode_id,)).fetchone()
+            anchors = adlearn.load_anchors(conn, show["show_id"]) if show else []
+            ranges = adscan.find_ad_ranges(segments, anchors)
             conn.execute(
                 "UPDATE episodes SET ads_json = ?, status = 'ready' WHERE id = ?", (json.dumps(ranges), episode_id)
             )
@@ -215,11 +311,77 @@ def debug_episode(episode_id: int):
     segments = load_transcript(episode_id)
     if segments is None:
         raise HTTPException(404, "No saved transcript yet. Use Re-scan ads on the show page.")
+    conn = db.connect()
+    show = conn.execute("SELECT show_id FROM episodes WHERE id = ?", (episode_id,)).fetchone()
+    anchors = adlearn.load_anchors(conn, show["show_id"]) if show else []
+    conn.close()
     return {
         "segments": len(segments),
-        "ranges": adscan.find_ad_ranges(segments),
+        "ranges": adscan.find_ad_ranges(segments, anchors),
         "hits": adscan.debug_hits(segments),
+        "learned_phrase_hits": adscan.anchor_hits(segments, anchors),
     }
+
+
+@app.get("/api/episodes/{episode_id}/markers")
+def debug_markers(episode_id: int):
+    """Intro/outro detection result for one episode, and what the player will actually skip."""
+    conn = db.connect()
+    row = conn.execute(
+        "SELECT e.markers_json, e.duration, s.intro_template_len, s.outro_template_len, "
+        "COALESCE(s.intro_skip, 0) AS intro_skip, COALESCE(s.outro_skip, 0) AS outro_skip "
+        "FROM episodes e JOIN shows s ON s.id = e.show_id WHERE e.id = ?",
+        (episode_id,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "Episode not found")
+    found = json.loads(row["markers_json"] or "{}")
+    duration = found.get("duration") or row["duration"] or 0
+    return {
+        "analysed": bool(found),
+        "markers": found,
+        "player_will_use": markers.effective(found, row["intro_skip"], row["outro_skip"], duration),
+        "show_templates": {"intro_seconds": row["intro_template_len"], "outro_seconds": row["outro_template_len"]},
+        "confidence_threshold": markers.SKIP_CONFIDENCE,
+        "notes": markers.transcript_notes(found, load_transcript(episode_id) or []),
+    }
+
+
+# ---------- hand-tagged ads ----------
+
+@app.get("/api/episodes/{episode_id}/ad-tags")
+def get_ad_tags(episode_id: int):
+    conn = db.connect()
+    tags = adlearn.list_tags(conn, episode_id)
+    conn.close()
+    return tags
+
+
+@app.post("/api/episodes/{episode_id}/ad-tags")
+def add_ad_tag(episode_id: int, body: TagIn):
+    conn = db.connect()
+    try:
+        result = adlearn.add_tag(conn, episode_id, body.start, body.end, body.kind)
+        return {"id": result["id"], "note": result["note"], "ads": adlearn.current_ads(conn, episode_id)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    finally:
+        conn.close()
+
+
+@app.delete("/api/ad-tags/{tag_id}")
+def remove_ad_tag(tag_id: int):
+    conn = db.connect()
+    try:
+        episode_id = adlearn.delete_tag(conn, tag_id)
+        return {"ok": True, "episode_id": episode_id, "ads": adlearn.current_ads(conn, episode_id)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    finally:
+        conn.close()
 
 
 @app.post("/api/episodes/{episode_id}/download")
@@ -322,8 +484,9 @@ def playlist_episodes(playlist_id: int):
         raise HTTPException(404, "Playlist not found")
     sql, params = playlist_query(json.loads(pl["rules_json"]))
     rows = conn.execute(sql, params).fetchall()
+    payload = episodes_payload(conn, rows)
     conn.close()
-    return [episode_dict(r) for r in rows]
+    return payload
 
 
 @app.post("/api/refresh")

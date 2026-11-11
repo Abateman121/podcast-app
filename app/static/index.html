@@ -49,6 +49,13 @@ dialog input,dialog select{width:100%}
 .qrow{padding:12px;background:var(--card);border-bottom:1px solid var(--line)}
 .qrow .t{font-weight:600}.qrow .s{color:var(--mute);font-size:14px}
 .qrow .top{display:flex;justify-content:space-between;gap:10px;align-items:center}
+dialog.wide{width:min(560px,94vw)}
+.mrow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0}
+.mrow .lab{flex:1 1 100%;font-size:14px;color:var(--mute);margin-top:8px}
+.mrow input{width:100px}
+.mrow button{padding:6px 10px;font:inherit;cursor:pointer}
+.lst .it{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}
+.lst .it button{padding:4px 8px;font:inherit;cursor:pointer}
 </style>
 </head>
 <body>
@@ -68,6 +75,35 @@ dialog input,dialog select{width:100%}
   <div class="bar" style="justify-content:flex-end"><button class="g" value="cancel">Cancel</button><button class="p" value="ok">Save playlist</button></div>
 </form></dialog>
 
+<dialog id="iodlg" class="wide"><form method="dialog">
+  <h3 style="margin:0 0 4px">Set intro/outro</h3>
+  <div class="msg" id="iostat"></div>
+  <label>Reference episode (any downloaded episode of this show)</label><select id="ioep"></select>
+  <audio id="ioau" controls preload="auto" style="width:100%;margin-top:8px"></audio>
+  <div id="iorows"></div>
+  <div class="msg" id="iomsg"></div>
+  <div class="bar" style="flex-wrap:wrap"><button type="button" class="g" id="iodi">Delete intro template</button><button type="button" class="g" id="iodo">Delete outro template</button></div>
+  <div class="bar" style="justify-content:flex-end"><button class="g" value="cancel">Close</button><button type="button" class="p" id="iosave">Save templates</button></div>
+</form></dialog>
+
+<dialog id="addlg" class="wide"><form method="dialog">
+  <h3 style="margin:0 0 4px">Tag an ad</h3>
+  <div class="msg" id="adinfo"></div>
+  <div class="mrow"><span class="lab">Missed ad starts at (m:ss)</span>
+    <input id="adstart" type="text" inputmode="decimal" placeholder="1:23">
+    <button type="button" class="g" data-f="adstart" data-a="now">Now</button><button type="button" class="g" data-f="adstart" data-a="-5">&minus;5s</button><button type="button" class="g" data-f="adstart" data-a="5">+5s</button><button type="button" class="g" data-f="adstart" data-a="play">Play</button></div>
+  <div class="mrow"><span class="lab">and ends at (m:ss)</span>
+    <input id="adend" type="text" inputmode="decimal" placeholder="2:05">
+    <button type="button" class="g" data-f="adend" data-a="now">Now</button><button type="button" class="g" data-f="adend" data-a="-5">&minus;5s</button><button type="button" class="g" data-f="adend" data-a="5">+5s</button><button type="button" class="g" data-f="adend" data-a="play">Play</button></div>
+  <div class="bar"><button type="button" class="p" id="adsave">Save missed ad</button></div>
+  <div class="msg" id="admsg"></div>
+  <label>Skipped by mistake? Tap Not an ad on the range that was wrongly skipped.</label>
+  <div class="lst" id="adranges"></div>
+  <label>Your tags in this episode</label>
+  <div class="lst" id="adtags"></div>
+  <div class="bar" style="justify-content:flex-end"><button class="g" value="cancel">Close</button></div>
+</form></dialog>
+
 <div id="player"><div class="in">
   <div id="now">Nothing playing</div><div id="sub"></div>
   <input id="seek" type="range" min="0" max="1000" value="0">
@@ -79,9 +115,10 @@ dialog input,dialog select{width:100%}
     <button class="g" id="spddn" title="Slower (0.05x)">&minus;</button><button class="g" id="spd" title="Tap to reset to 1.0x">1.0x</button><button class="g" id="spdup" title="Faster (0.05x)">+</button>
     <button class="g" id="skipad" title="Skip detected ads">Ads: on</button>
     <button class="g" id="skipio" title="Skip intro and outro">Intro/outro: on</button>
+    <button class="g" id="tagad" title="Tag a missed ad, or an ad that was skipped by mistake">Tag ad</button>
     <span class="tm" id="rem">0:00</span>
   </div>
-  <div id="ver">v0.0.13</div>
+  <div id="ver">v0.0.14</div>
 </div></div>
 <audio id="au" preload="auto"></audio>
 
@@ -136,13 +173,22 @@ async function showShows(showId) {
   if (showId) {
     const eps = await api('/api/episodes?show_id=' + showId);
     const show = (await api('/api/shows')).find(x => x.id === +showId) || {};
+    const tplLen = l => l ? l.toFixed(1) + ' s' : 'none';
     let html = `<div class="bar"><button class="g" id="bk">Back to shows</button><button class="g" id="rescan">Re-scan ads</button></div>
-      <div class="bar skipbar"><label>Skip intro <input id="introsec" type="number" min="0" max="600" value="${show.intro_skip || 0}"> sec</label>
-      <label>Skip outro <input id="outrosec" type="number" min="0" max="600" value="${show.outro_skip || 0}"> sec</label>
-      <button class="g" id="saveskip">Save</button></div><div class="msg" id="rmsg"></div>`;
+      <div class="bar"><button class="g" id="setio">Set intro/outro</button><button class="g" id="redetect">Re-detect intro/outro</button></div>
+      <div class="msg">Intro template: ${tplLen(show.intro_template_len)}. Outro template: ${tplLen(show.outro_template_len)}. Episodes with no confident match use the fallback seconds below.</div>
+      <div class="bar skipbar"><label>Fallback intro <input id="introsec" type="number" min="0" max="600" value="${show.intro_skip || 0}"> sec</label>
+      <label>Fallback outro <input id="outrosec" type="number" min="0" max="600" value="${show.outro_skip || 0}"> sec</label>
+      <button class="g" id="saveskip">Save</button></div><div class="msg" id="rmsg"></div><div class="msg" id="lmsg" style="min-height:0"></div>`;
     html += eps.map((e, i) => epRow(e, i)).join('');
     $('#main').innerHTML = html;
     $('#bk').onclick = () => showShows();
+    $('#setio').onclick = () => openIoDialog(showId, eps, () => showShows(showId));
+    $('#redetect').onclick = async () => { const r = await post(`/api/shows/${showId}/redetect`);
+      $('#rmsg').textContent = 'Re-checking intro and outro for ' + r.queued + ' downloaded episodes in the background. This uses the CPU only.'; };
+    api(`/api/shows/${showId}/ad-learning`).then(l => { if (l.missed_ads || l.not_ads) {
+      $('#lmsg').textContent = 'Learned from your tags: ' + l.missed_ads + ' missed ads (' + l.audio_samples + ' with audio), ' + l.phrases.length + ' phrases.'
+        + (l.phrases.length ? ' For example "' + l.phrases.slice(0, 3).join('", "') + '".' : ''); } }).catch(() => {});
     $('#saveskip').onclick = async () => {
       const r = await post(`/api/shows/${showId}/skips`, {intro_skip: +$('#introsec').value || 0, outro_skip: +$('#outrosec').value || 0});
       eps.forEach(x => { x.intro_skip = r.intro_skip; x.outro_skip = r.outro_skip; });
@@ -235,16 +281,51 @@ setInterval(pollQueue, 2500);
 $('#tabs').onclick = ev => { const b = ev.target.closest('button'); if (!b) return; tab = b.dataset.t;
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b)); render(); };
 
+// ---- skip rules (pure functions, no DOM) ----
+// Intro to skip: detected markers first, otherwise the show's fixed seconds from the start.
+function introRange(e, dur) {
+  const m = e.markers || {};
+  if (typeof m.intro_end === 'number') return {start: m.intro_start || 0, end: m.intro_end};
+  if (e.intro_skip > 0 && e.intro_skip < dur) return {start: 0, end: e.intro_skip};
+  return null;
+}
+// Where the outro starts: detected marker first, otherwise the show's fixed seconds before the end.
+function outroStart(e, dur) {
+  const m = e.markers || {};
+  if (typeof m.outro_start === 'number') return m.outro_start;
+  if (e.outro_skip > 0 && dur) return dur - e.outro_skip - 0.5;
+  return null;
+}
+// What to do about the intro at time t. Nothing is skipped before the intro starts (a cold open plays),
+// the skip happens once, and seeking back into the intro afterwards does not skip again.
+function introAction(e, t, dur, on) {
+  if (!on || !dur || e._introDone) return null;
+  const r = introRange(e, dur);
+  if (!r) return null;
+  if (t >= r.end) return {type: 'passed'};
+  if (t >= r.start) return {type: 'skip', to: Math.min(r.end, dur)};
+  return null;
+}
+function outroAction(e, t, dur, on) {
+  if (!on || !dur || e._outroDone) return null;
+  const s = outroStart(e, dur);
+  if (s !== null && t >= s) return {type: 'skip', to: dur};
+  return null;
+}
+// ---- end skip rules ----
+
 // ---- player ----
 async function play(i) {
   qi = i; const e = queue[i]; if (!e) return;
   try { Object.assign(e, await api('/api/episodes/' + e.id)); } catch (_) { /* play with what we have */ }
   au.src = '/audio/' + e.id;
   au.playbackRate = speed;
-  e._outroDone = false;
+  e._outroDone = false; e._introDone = false; e._preview = null;
   au.onloadedmetadata = () => {
     let start = (e.position > 5 && e.position < au.duration - 10) ? e.position : 0;
-    if (skipIO && e.intro_skip > 0 && e.intro_skip < au.duration && start < e.intro_skip) start = e.intro_skip;
+    const a = introAction(e, start, au.duration, skipIO);
+    if (a && a.type === 'skip') { e._introDone = true; start = a.to; toast('Skipped intro'); }
+    else if (a) e._introDone = true;
     if (start > 0) au.currentTime = start;
   };
   au.play();
@@ -269,9 +350,13 @@ function toast(msg) { $('#sub').textContent = msg; clearTimeout(toastT);
 
 au.ontimeupdate = () => {
   const e = queue[qi]; if (!e) return;
-  if (skipIO && e.outro_skip > 0 && au.duration && !e._outroDone && au.currentTime >= au.duration - e.outro_skip - 0.5) {
-    e._outroDone = true; toast('Skipped outro'); au.currentTime = au.duration; return; }
-  if (skipAds) for (const [s, t] of e.ads) if (au.currentTime >= s && au.currentTime < t - 0.5) {
+  const oa = outroAction(e, au.currentTime, au.duration, skipIO);
+  if (oa) { e._outroDone = true; toast('Skipped outro'); au.currentTime = oa.to; return; }
+  const ia = introAction(e, au.currentTime, au.duration, skipIO);
+  if (ia && ia.type === 'passed') e._introDone = true;
+  else if (ia) { e._introDone = true; toast('Skipped intro'); au.currentTime = ia.to; return; }
+  const previewing = e._preview && au.currentTime >= e._preview[0] && au.currentTime <= e._preview[1];
+  if (skipAds && !previewing) for (const [s, t] of e.ads) if (au.currentTime >= s && au.currentTime < t - 0.5) {
     au.currentTime = t; toast('Skipped ad (' + Math.round(t - s) + 's)'); break; }
   $('#seek').value = au.duration ? (au.currentTime / au.duration) * 1000 : 0;
   $('#cur').textContent = fmt(au.currentTime);
@@ -300,7 +385,110 @@ paintToggles();
 let tick = 0;
 setInterval(async () => { const e = queue[qi]; if (!e) return;
   tick++; if (e.status === 'ready' && tick % 6) return;   // every 5s while scanning, every 30s otherwise
-  try { const f = await api('/api/episodes/' + e.id); e.ads = f.ads; e.status = f.status; } catch (_) {} }, 5000);
+  try { const f = await api('/api/episodes/' + e.id); e.ads = f.ads; e.status = f.status; e.markers = f.markers; } catch (_) {} }, 5000);
+
+// ---- intro/outro marking tool (show page) ----
+const IO_ROWS = [['intro_start', 'Intro starts at'], ['intro_end', 'Intro ends at'], ['outro_start', 'Outro starts at'], ['outro_end', 'Outro ends at']];
+let ioDone = null;
+async function openIoDialog(showId, eps, done) {
+  const usable = eps.filter(e => e.playable);
+  if (!usable.length) { alert('Download an episode of this show first, then mark its intro and outro.'); return; }
+  au.pause(); ioDone = done;
+  const ioau = $('#ioau');
+  const say = (m, bad) => { const el = $('#iomsg'); el.textContent = m; el.className = 'msg' + (bad ? ' bad' : ''); };
+  const status = async () => { const s = (await api('/api/shows')).find(x => x.id === +showId) || {};
+    const len = l => l ? l.toFixed(1) + ' s' : 'none';
+    $('#iostat').textContent = 'Intro template: ' + len(s.intro_template_len) + '. Outro template: ' + len(s.outro_template_len) + '.'; };
+  $('#ioep').innerHTML = usable.map(e => `<option value="${e.id}">${esc(e.title)}</option>`).join('');
+  ioau.src = '/audio/' + usable[0].id;
+  $('#ioep').onchange = () => { ioau.src = '/audio/' + $('#ioep').value; };
+  $('#iorows').innerHTML = IO_ROWS.map(([k, label]) => `<div class="mrow"><span class="lab">${label} (seconds)</span>
+    <input id="io_${k}" type="number" min="0" step="0.1">
+    <button type="button" class="g" data-k="${k}" data-a="now">Now</button>
+    <button type="button" class="g" data-k="${k}" data-a="-0.1">&minus;0.1</button>
+    <button type="button" class="g" data-k="${k}" data-a="0.1">+0.1</button>
+    <button type="button" class="g" data-k="${k}" data-a="play">${k.endsWith('_end') ? 'Play 3s before' : 'Play from here'}</button></div>`).join('');
+  $('#iorows').onclick = ev => { const b = ev.target.closest('button'); if (!b) return;
+    const f = $('#io_' + b.dataset.k), a = b.dataset.a;
+    if (a === 'now') f.value = ioau.currentTime.toFixed(1);
+    else if (a === 'play') { ioau.currentTime = Math.max(0, (+f.value || 0) - (b.dataset.k.endsWith('_end') ? 3 : 0)); ioau.play(); }
+    else f.value = Math.max(0, Math.round(((+f.value || 0) + (+a)) * 10) / 10).toFixed(1); };
+  $('#iosave').onclick = async () => {
+    const body = {episode_id: +$('#ioep').value};
+    for (const [k] of IO_ROWS) { const v = $('#io_' + k).value; body[k] = v === '' ? null : +v; }
+    for (const [a, b] of [['intro_start', 'intro_end'], ['outro_start', 'outro_end']]) {
+      if ((body[a] === null) !== (body[b] === null)) { say('Fill in both the start and the end, or leave both empty.', true); return; }
+      if (body[a] !== null && body[b] <= body[a]) { say('The end has to be after the start.', true); return; } }
+    if (IO_ROWS.every(([k]) => body[k] === null)) { say('Mark an intro, an outro, or both.', true); return; }
+    say('Saving...');
+    try { const r = await post(`/api/shows/${showId}/templates`, body);
+      say('Saved. ' + r.queued + ' downloaded episodes are being re-checked in the background.'); await status(); }
+    catch (e) { say(readErr(e), true); } };
+  const del = kind => async () => {
+    if (!confirm('Delete the ' + kind + ' template? Episodes will use the fallback seconds.')) return;
+    try { await api(`/api/shows/${showId}/templates/${kind}`, {method: 'DELETE'}); say('Deleted. Episodes are being re-checked.'); await status(); }
+    catch (e) { say(readErr(e), true); } };
+  $('#iodi').onclick = del('intro'); $('#iodo').onclick = del('outro');
+  say('Pick a part of the episode that is the theme music, then press Now at the start and the end.'); await status();
+  $('#iodlg').showModal();
+}
+$('#iodlg').addEventListener('close', () => { $('#ioau').pause(); if (ioDone) { const d = ioDone; ioDone = null; d(); } });
+
+// ---- tag a missed ad (player) ----
+const parseT = s => { s = String(s).trim(); if (!s) return NaN; const p = s.split(':').map(Number); return p.some(isNaN) ? NaN : p.reduce((a, x) => a * 60 + x, 0); };
+const fmtT = s => { s = Math.max(0, s || 0); const m = Math.floor(s / 60), x = s - m * 60; return m + ':' + (x < 10 ? '0' : '') + x.toFixed(1); };
+const tagSay = (m, bad) => { const el = $('#admsg'); el.textContent = m; el.className = 'msg' + (bad ? ' bad' : ''); };
+let tagClock;
+async function drawTags() {
+  const e = queue[qi]; if (!e) return;
+  $('#adranges').innerHTML = e.ads.length ? e.ads.map(r => `<div class="it"><span>${fmtT(r[0])} to ${fmtT(r[1])}</span><span>
+    <button type="button" class="g" data-act="play" data-s="${r[0]}" data-t="${r[1]}">Play</button>
+    <button type="button" class="g" data-act="notad" data-s="${r[0]}" data-t="${r[1]}">Not an ad</button></span></div>`).join('')
+    : '<div class="msg">No ads are being skipped in this episode.</div>';
+  let tags = []; try { tags = await api(`/api/episodes/${e.id}/ad-tags`); } catch (_) {}
+  $('#adtags').innerHTML = tags.length ? tags.map(t => `<div class="it"><span>${t.kind === 'ad' ? 'Missed ad' : 'Not an ad'}: ${fmtT(t.start)} to ${fmtT(t.end)}</span>
+    <button type="button" class="g" data-act="remove" data-id="${t.id}">Remove</button></div>`).join('') : '<div class="msg">None yet.</div>';
+}
+function openTagDialog() {
+  const e = queue[qi]; if (!e) { alert('Play an episode first.'); return; }
+  const now = au.currentTime || 0;
+  $('#adstart').value = fmtT(Math.max(0, now - 30)); $('#adend').value = fmtT(now);
+  tagSay('Filled in with the last 30 seconds. Adjust the times, then save.');
+  const clock = () => { $('#adinfo').textContent = e.title + ' (now at ' + fmtT(au.currentTime) + ')'; };
+  clock(); clearInterval(tagClock); tagClock = setInterval(clock, 500);
+  drawTags(); $('#addlg').showModal();
+}
+$('#tagad').onclick = openTagDialog;
+$('#addlg').addEventListener('close', () => clearInterval(tagClock));
+$('#addlg').onclick = async ev => {
+  const b = ev.target.closest('button'); const e = queue[qi]; if (!b || !e) return;
+  if (b.dataset.f) {                                   // start/end field helpers
+    const f = $('#' + b.dataset.f), a = b.dataset.a;
+    if (a === 'now') f.value = fmtT(au.currentTime);
+    else if (a === 'play') {
+      const at = Math.max(0, parseT(f.value) - (b.dataset.f === 'adend' ? 5 : 0)); if (isNaN(at)) return;
+      const s = parseT($('#adstart').value), t = parseT($('#adend').value);
+      e._preview = [isNaN(s) ? at : s, isNaN(t) ? at + 120 : t + 1]; au.currentTime = at; au.play(); }
+    else { const v = parseT(f.value); f.value = fmtT((isNaN(v) ? au.currentTime : v) + (+a)); }
+    return; }
+  if (b.id === 'adsave') {
+    const s = parseT($('#adstart').value), t = parseT($('#adend').value);
+    if (isNaN(s) || isNaN(t) || t <= s) { tagSay('Enter a start and an end, with the end after the start.', true); return; }
+    b.disabled = true; tagSay('Saving...');
+    try { const r = await post(`/api/episodes/${e.id}/ad-tags`, {start: s, end: t, kind: 'ad'}); e.ads = r.ads;
+      tagSay('Saved. It is skipped from now on, and the server will look for this ad in your other episodes.' + (r.note ? ' ' + r.note : '')); await drawTags(); }
+    catch (err) { tagSay(readErr(err), true); }
+    b.disabled = false; return; }
+  const s = +b.dataset.s, t = +b.dataset.t;
+  if (b.dataset.act === 'play') { e._preview = [s, t + 1]; au.currentTime = Math.max(0, s - 3); au.play(); return; }
+  try {
+    if (b.dataset.act === 'notad') { const r = await post(`/api/episodes/${e.id}/ad-tags`, {start: s, end: t, kind: 'not_ad'}); e.ads = r.ads; tagSay('Done. That range will play from now on.'); }
+    else if (b.dataset.act === 'remove') { const r = await api('/api/ad-tags/' + b.dataset.id, {method: 'DELETE'}); e.ads = r.ads; tagSay('Removed.'); }
+    else return;
+    await drawTags();
+  } catch (err) { tagSay(readErr(err), true); }
+};
+
 window.addEventListener('pagehide', () => save(false));
 render();
 </script>

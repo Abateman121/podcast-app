@@ -2,7 +2,7 @@
 
 A self-hosted podcast app for myself. It pulls in shows from almost any link, downloads the latest episodes, transcribes them on the GPU, and automatically skips the ads while you listen.
 
-**Current version: v0.0.13** (shown in the bottom right of the player bar on every screen)
+**Current version: v0.0.14** (shown in the bottom right of the player bar on every screen)
 
 ## Features
 
@@ -30,12 +30,40 @@ A self-hosted podcast app for myself. It pulls in shows from almost any link, do
 - Detected ads are skipped automatically during playback, with a short "Skipped ad" notice.
 - Transcripts are saved, so **Re-scan ads** on a show page re-applies the current detection rules without running the GPU again.
 - The **Ads: on/off** toggle in the player turns skipping on or off, and the choice is remembered on that device.
-- A debug endpoint (`/api/episodes/{id}/debug`) lists the phrase hits for an episode.
+- A debug endpoint (`/api/episodes/{id}/debug`) lists the phrase hits for an episode, including hits from phrases learned from your tags.
+
+### Tagging missed ads
+When an ad gets through, tap **Tag ad** in the player.
+- The dialog is filled in with the last 30 seconds. Use **Now**, the 5 second nudges, and **Play** to set the exact start and end, then save.
+- The ad is skipped right away in that episode and stays skipped after a re-scan.
+- The app learns from it in two ways:
+  - **Audio.** The ad is fingerprinted. A background worker looks for the same audio in every downloaded episode, in any show. This catches ads that are reused word for word, even with different encoding or volume.
+  - **Phrases.** Phrases from the transcript that never appear in the show's normal speech are saved. When one shows up in another transcript, an ad is placed around it using the same lead and length as the one you tagged. This works on the saved transcripts, so no GPU run is needed.
+- If something was skipped by mistake, open **Tag ad** and tap **Not an ad** on that range. That range plays from then on in that episode.
+- Your tags are listed in the same dialog, and **Remove** undoes one. Removing a tag also removes what was learned from it.
+- Each show page shows how many tags and phrases the app has learned from.
+- Matching tagged audio is CPU only. It reads each episode once, about 10 seconds per hour of audio. It runs again over your library whenever you add or remove a tag.
 
 ### Intro and outro skipping
-- Set a per-show intro and outro length (0 to 600 seconds) on the show page.
-- Playback starts after the intro, and the outro is skipped at the end of the episode.
-- The **Intro/outro: on/off** toggle in the player turns this on or off, and the choice is remembered on that device.
+Each episode gets its own intro end time and outro start time. They are found in this order:
+1. **Audio fingerprint of the show's theme.** Most shows reuse the same intro and outro music. Mark it once and the app finds it in every other episode by its sound, not by a fixed time, so inserted ads do not throw it off. It handles different encodings, volume changes, and a voice talking over the start of the music.
+2. **Chapters.** If the file or the feed (`podcast:chapters`) has chapters titled like Intro, Outro, Theme, or Credits, those are used when there is no theme match.
+3. **Fallback seconds.** If neither finds anything confident, the show's fallback intro and outro seconds are used, the same as before. 0 means no skip. Nothing is guessed below the confidence threshold.
+
+Setting up a show:
+- Open the show page and tap **Set intro/outro**.
+- Pick any downloaded episode, press play, and use **Now** to mark where the intro starts and ends. Do the same for the outro if you want. The 0.1 second nudges and **Play** buttons help fine tune. Intro and outro can each be 3 to 120 seconds.
+- Save. The app fingerprints that section as the show's template and re-checks all downloaded episodes of the show.
+- To replace a template, mark it again. Use the delete buttons in the same dialog to remove one.
+- **Re-detect intro/outro** on the show page redoes detection for the whole show. It uses the CPU only and does not run Whisper again.
+
+Playback:
+- The intro is skipped once, when playback reaches where it starts. A cold open before the intro plays normally.
+- If you seek back into the intro after it was skipped, it is not skipped again.
+- The outro is skipped to the end of the episode, which moves on to the next one.
+- The **Intro/outro: on/off** toggle in the player turns all of this on or off, and the choice is remembered on that device.
+- Detection runs once per episode after download, on its own worker, so episodes are playable straight away.
+- A debug endpoint (`/api/episodes/{id}/markers`) shows the source, confidence, and times for an episode, and what the player will actually skip.
 
 ### Smart playlists
 - Create playlists from rules:
@@ -54,6 +82,15 @@ A self-hosted podcast app for myself. It pulls in shows from almost any link, do
 - Progress is saved every few seconds, so episodes resume where you left off. Finished episodes are marked as played and greyed out.
 - Media Session support: lock screen and headphone controls for play, pause, seek, and next track, plus episode artwork.
 - Layout follows your system light or dark theme and is safe-area aware for phones.
+
+## Changes in v0.0.14
+- Automatic intro and outro detection for every episode. It uses an audio fingerprint of the show's theme, then chapters, then the fixed seconds as a fallback. The fixed seconds are now called fallback seconds on the show page.
+- New **Set intro/outro** tool on each show page to mark the theme once, with **Re-detect intro/outro** to redo a show.
+- A cold open before the intro is no longer skipped, and seeking back into a skipped intro does not skip it again.
+- New **Tag ad** button in the player for ads that were missed. Tagged ads are skipped at once, and the app learns them by audio and by phrase to catch them in other episodes.
+- Added **Not an ad** for ranges that were skipped by mistake.
+- New settings `SKIP_CONFIDENCE`, `AD_AUDIO_CONFIDENCE`, `INTRO_WINDOW_SECONDS`, and `OUTRO_WINDOW_SECONDS`.
+- Added numpy and scipy. The database upgrades itself on start.
 
 ## Changes in v0.0.13
 - Added the app version in the bottom right of the player bar, so it appears on every screen.
@@ -99,13 +136,17 @@ services:
 | `WHISPER_COMPUTE` | `int8` | Whisper compute type |
 | `REFRESH_MINUTES` | `30` | How often feeds are checked |
 | `AUTO_DOWNLOAD_LATEST` | `3` | Newest episodes per show to download automatically |
-| `DATA_DIR` | `/data` | Where the database, audio, and transcripts are stored |
+| `SKIP_CONFIDENCE` | `0.6` | How sure the intro/outro theme match must be (0 to 1) before it is used |
+| `AD_AUDIO_CONFIDENCE` | `0.5` | How sure a match to a tagged ad's audio must be (0 to 1) |
+| `INTRO_WINDOW_SECONDS` | `240` | How much of the start of an episode is searched for the intro |
+| `OUTRO_WINDOW_SECONDS` | `240` | How much of the end of an episode is searched for the outro |
+| `DATA_DIR` | `/data` | Where the database, audio, transcripts, and templates are stored |
 | `DISABLE_WORKERS` | unset | Set to `1` to run the web app without background workers |
 
-The `/data` volume holds the SQLite database, downloaded audio, and saved transcripts.
+The `/data` volume holds the SQLite database, downloaded audio, saved transcripts, and the audio snippets behind intro/outro templates and tagged ads (`/data/templates`). The snippets let the fingerprints be rebuilt if the matching method changes.
 
 ## How it is built
-- **Backend:** Python, FastAPI, SQLite (`app/main.py`, `feeds.py`, `sources.py`, `workers.py`, `adscan.py`, `db.py`)
+- **Backend:** Python, FastAPI, SQLite (`app/main.py`, `feeds.py`, `sources.py`, `workers.py`, `adscan.py`, `db.py`, plus `fingerprint.py`, `markers.py`, and `adlearn.py` for intro/outro detection and learning from tagged ads)
 - **Frontend:** a single static page, `app/static/index.html`, with no build step
-- **Workers:** three background threads for feed refresh, downloading, and ad scanning
+- **Workers:** five background threads for feed refresh, downloading, ad scanning, intro/outro detection, and matching tagged ads. The last two use the CPU only.
 - **Image:** Nvidia CUDA runtime base with ffmpeg, built and published by GitHub Actions
