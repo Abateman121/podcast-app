@@ -216,7 +216,7 @@ def unpack(blob):
 # ---------- matching ----------
 
 def _votes(template, query):
-    """Return (offsets, template_hash_count) for every hash that appears in both."""
+    """Return the time offset (query frame minus template frame) of every hash that appears in both."""
     if len(template) == 0 or len(query) == 0:
         return np.zeros(0, np.int64)
     left = np.searchsorted(template._sh, query.hashes, side="left")

@@ -194,10 +194,11 @@ def delete_template(show_id: int, kind: str):
     conn = db.connect()
     try:
         markers.delete_template(conn, show_id, kind)
+        queued = markers.queue_redetect(conn, show_id)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    queued = markers.queue_redetect(conn, show_id)
-    conn.close()
+    finally:
+        conn.close()
     return {"ok": True, "queued": queued}
 
 

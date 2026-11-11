@@ -60,7 +60,8 @@ def refresh_feed(conn, show_id, feed_url):
         if entry.get("published_parsed"):
             published = calendar.timegm(entry.published_parsed)
         duration = parse_duration(entry.get("itunes_duration"))
-        chapters_url = (entry.get("podcast_chapters") or {}).get("url")
+        chapters = entry.get("podcast_chapters")
+        chapters_url = chapters.get("url") if isinstance(chapters, dict) else None
         cur = conn.execute(
             "INSERT OR IGNORE INTO episodes (show_id, guid, title, published, duration, audio_url, chapters_url) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
