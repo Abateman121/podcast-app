@@ -253,8 +253,10 @@ def add_tag(conn, episode_id, start, end, kind):
     if not ep:
         raise LookupError("Episode not found")
     start, end = max(0.0, float(start)), float(end)
-    if ep["duration"] and end > ep["duration"]:
-        end = float(ep["duration"])
+    # The length in the feed is often wrong (ads are inserted after it is written), so measure the file.
+    real = markers.probe_duration(ep["file_path"]) if ep["file_path"] and os.path.exists(ep["file_path"]) else 0.0
+    if real > 0 and end > real:
+        end = real
     length = end - start
     if kind == "ad" and not (MIN_AD_SEC <= length <= MAX_AD_SEC):
         raise ValueError(f"A missed ad must be between {MIN_AD_SEC:.0f} and {MAX_AD_SEC:.0f} seconds long.")
