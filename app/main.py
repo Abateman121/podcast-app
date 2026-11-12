@@ -13,6 +13,7 @@ import adscan
 import db
 import feeds
 import markers
+import repeats
 import sources
 import workers
 from progress import ERRORS, PROGRESS
@@ -72,8 +73,17 @@ def playlist_query(rules):
         where.append("e.duration >= ?")
         params.append(int(rules["min_minutes"]) * 60)
     if rules.get("newer_than_days"):
+        # Only playlists saved before v0.0.15 carry this rule. It is now a setting on each show.
         where.append("e.published >= ?")
         params.append(int(time.time()) - int(rules["newer_than_days"]) * 86400)
+    # Limits set on the show: only recent episodes, and only the newest N downloaded ones.
+    where.append("(COALESCE(s.newer_than_days, 0) <= 0 OR e.published >= ? - s.newer_than_days * 86400)")
+    params.append(int(time.time()))
+    where.append(
+        "(COALESCE(s.keep_last, 0) <= 0 OR (SELECT COUNT(*) FROM episodes n WHERE n.show_id = e.show_id "
+        f"AND n.status IN {PLAYABLE_SQL} AND (n.published > e.published OR (n.published = e.published AND n.id > e.id))"
+        ") < s.keep_last)"
+    )
     order = "ASC" if rules.get("sort") == "oldest" else "DESC"
     limit = int(rules.get("limit", 50))
     sql = (
@@ -93,6 +103,15 @@ class UrlIn(BaseModel):
 class SkipsIn(BaseModel):
     intro_skip: int = 0
     outro_skip: int = 0
+
+
+class LimitsIn(BaseModel):
+    newer_than_days: int = 0
+    keep_last: int = 0
+
+
+class AcceptIn(BaseModel):
+    kind: str
 
 
 class TemplatesIn(BaseModel):
@@ -126,7 +145,8 @@ def list_shows():
     conn = db.connect()
     rows = conn.execute(
         "SELECT id, title, image, feed_url, COALESCE(intro_skip, 0) AS intro_skip, "
-        "COALESCE(outro_skip, 0) AS outro_skip, intro_template_len, outro_template_len FROM shows ORDER BY title"
+        "COALESCE(outro_skip, 0) AS outro_skip, intro_template_len, outro_template_len, "
+        "COALESCE(newer_than_days, 0) AS newer_than_days, COALESCE(keep_last, 0) AS keep_last FROM shows ORDER BY title"
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -153,6 +173,65 @@ def set_skips(show_id: int, body: SkipsIn):
     if cur.rowcount == 0:
         raise HTTPException(404, "Show not found")
     return {"intro_skip": intro, "outro_skip": outro}
+
+
+@app.post("/api/shows/{show_id}/limits")
+def set_limits(show_id: int, body: LimitsIn):
+    """Which episodes of this show smart playlists may take. 0 means no limit. Nothing is deleted."""
+    days = max(0, min(3650, body.newer_than_days))
+    keep = max(0, min(1000, body.keep_last))
+    conn = db.connect()
+    cur = conn.execute("UPDATE shows SET newer_than_days = ?, keep_last = ? WHERE id = ?", (days, keep, show_id))
+    conn.commit()
+    conn.close()
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Show not found")
+    return {"newer_than_days": days, "keep_last": keep}
+
+
+@app.get("/api/shows/{show_id}/repeats")
+def show_repeats(show_id: int):
+    """Sections of audio found in more than one episode, waiting for the user to say what they are."""
+    conn = db.connect()
+    try:
+        return repeats.show_status(conn, show_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    finally:
+        conn.close()
+
+
+@app.post("/api/shows/{show_id}/repeats/scan")
+def scan_repeats(show_id: int):
+    conn = db.connect()
+    repeats.rescan(conn, show_id)
+    conn.close()
+    return {"ok": True}
+
+
+@app.post("/api/repeats/{repeat_id}/accept")
+def accept_repeat(repeat_id: int, body: AcceptIn):
+    conn = db.connect()
+    try:
+        return repeats.accept(conn, repeat_id, body.kind)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    finally:
+        conn.close()
+
+
+@app.post("/api/repeats/{repeat_id}/ignore")
+def ignore_repeat(repeat_id: int):
+    conn = db.connect()
+    try:
+        repeats.ignore(conn, repeat_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    finally:
+        conn.close()
+    return {"ok": True}
 
 
 @app.post("/api/shows/{show_id}/templates")

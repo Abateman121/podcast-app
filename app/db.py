@@ -69,6 +69,20 @@ CREATE TABLE IF NOT EXISTS ad_tags (
 );
 CREATE INDEX IF NOT EXISTS ad_tags_episode ON ad_tags(episode_id);
 CREATE INDEX IF NOT EXISTS ad_tags_show ON ad_tags(show_id);
+-- Sections of audio found in more than one episode of a show. status 'new' waits for the user,
+-- 'ignored' is kept so the same section is not suggested again.
+CREATE TABLE IF NOT EXISTS repeats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    show_id INTEGER NOT NULL REFERENCES shows(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'new',
+    guess TEXT NOT NULL DEFAULT 'ad',
+    seconds REAL NOT NULL DEFAULT 0,
+    episodes INTEGER NOT NULL DEFAULT 0,
+    compared INTEGER NOT NULL DEFAULT 0,
+    occ_json TEXT NOT NULL DEFAULT '[]',
+    created INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS repeats_show ON repeats(show_id);
 -- Small counters shared by the web app and the workers.
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -84,6 +98,9 @@ SHOW_COLUMNS = {
     "intro_template_len": "REAL",
     "outro_template": "BLOB",
     "outro_template_len": "REAL",
+    "repeat_sig": "TEXT",           # which episodes were last compared for repeated audio
+    "newer_than_days": "INTEGER",   # playlists only take episodes this recent (0 or NULL = no limit)
+    "keep_last": "INTEGER",         # playlists only take the newest N downloaded episodes (0 or NULL = no limit)
 }
 EPISODE_COLUMNS = {
     "markers_json": "TEXT DEFAULT '{}'",

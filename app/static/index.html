@@ -6,10 +6,10 @@
 <meta name="theme-color" content="#14171c">
 <title>Podcasts</title>
 <style>
-:root{--bg:#eef0f2;--card:#fff;--ink:#15181c;--mute:#667080;--line:#d9dde2;--acc:#e8700c;--accink:#fff}
-@media(prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1c2027;--ink:#e9ecef;--mute:#8b94a1;--line:#2a2f38;--acc:#ff8a2b;--accink:#14171c}}
+:root{--bg:#eef0f2;--card:#fff;--ink:#15181c;--mute:#667080;--line:#d9dde2;--acc:#e8700c;--accink:#fff;--ad:#d43f3f;--io:#2f7fe0}
+@media(prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1c2027;--ink:#e9ecef;--mute:#8b94a1;--line:#2a2f38;--acc:#ff8a2b;--accink:#14171c;--ad:#ff5c5c;--io:#5aa2ff}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:165px}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:185px}
 header{position:sticky;top:0;background:var(--bg);padding:max(12px,env(safe-area-inset-top)) 16px 0;z-index:5}
 nav{display:flex;gap:4px;border-bottom:1px solid var(--line)}
 nav button{background:none;border:0;color:var(--mute);font:inherit;font-weight:600;padding:10px 14px;border-bottom:3px solid transparent;cursor:pointer}
@@ -32,8 +32,21 @@ dialog input,dialog select{width:100%}
 #player .in{max-width:760px;margin:0 auto}
 #now{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #sub{color:var(--mute);font-size:13px;height:18px}
-#ver{text-align:right;font-size:11px;color:var(--mute);margin-top:2px;font-variant-numeric:tabular-nums}
-#seek{width:100%;accent-color:var(--acc);margin:6px 0}
+#ver{font-size:11px;color:var(--mute);font-variant-numeric:tabular-nums}
+#seek{width:100%;accent-color:var(--acc);margin:2px 0 6px}
+/* Coloured strip above the seek bar. The side margin matches how far the seek thumb can travel. */
+#bands{position:relative;height:7px;margin:6px 8px 0;background:var(--line);border-radius:4px;overflow:hidden}
+#bands i{position:absolute;top:0;bottom:0;min-width:2px}
+#bands i.ad,.key i.ad{background:var(--ad)}
+#bands i.io,.key i.io{background:var(--io)}
+#foot{display:flex;justify-content:space-between;align-items:center;margin-top:2px}
+.key{font-size:11px;color:var(--mute)}
+.key i{display:inline-block;width:10px;height:7px;border-radius:2px;margin:0 4px 0 8px}
+.key i:first-child{margin-left:0}
+.rp{padding:10px 12px;background:var(--card);border:1px solid var(--line);border-radius:8px;margin:6px 0;font-size:14px}
+.rp .s{color:var(--mute)}
+.rp .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.rp .acts button{padding:6px 10px}
 .ctl{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap}
 .skipbar{align-items:center;flex-wrap:wrap}.skipbar label{font-size:14px;color:var(--mute)}.skipbar input{width:80px}
 .ctl button{min-width:44px;min-height:40px}
@@ -69,9 +82,9 @@ dialog.wide{width:min(560px,94vw)}
   <label>Name</label><input id="pn" required>
   <label>Shows (none selected means all)</label><select id="ps" multiple size="4"></select>
   <label>Max length (minutes, optional)</label><input id="pm" type="number" min="1">
-  <label>Only from the last (days, optional)</label><input id="pd" type="number" min="1">
   <label>Order</label><select id="po"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select>
   <label><input id="pu" type="checkbox" checked style="width:auto"> Unplayed only</label>
+  <div class="msg">"Only from the last days" and "keep last episodes" are set per show, on the show's page.</div>
   <div class="bar" style="justify-content:flex-end"><button class="g" value="cancel">Cancel</button><button class="p" value="ok">Save playlist</button></div>
 </form></dialog>
 
@@ -106,6 +119,7 @@ dialog.wide{width:min(560px,94vw)}
 
 <div id="player"><div class="in">
   <div id="now">Nothing playing</div><div id="sub"></div>
+  <div id="bands"></div>
   <input id="seek" type="range" min="0" max="1000" value="0">
   <div class="ctl">
     <span class="tm" id="cur">0:00</span>
@@ -118,7 +132,7 @@ dialog.wide{width:min(560px,94vw)}
     <button class="g" id="tagad" title="Tag a missed ad, or an ad that was skipped by mistake">Tag ad</button>
     <span class="tm" id="rem">0:00</span>
   </div>
-  <div id="ver">v0.0.14</div>
+  <div id="foot"><div class="key" id="key" hidden><i class="ad"></i>Ad<i class="io"></i>Intro/outro</div><span></span><div id="ver">v0.0.15</div></div>
 </div></div>
 <audio id="au" preload="auto"></audio>
 
@@ -179,7 +193,13 @@ async function showShows(showId) {
       <div class="msg">Intro template: ${tplLen(show.intro_template_len)}. Outro template: ${tplLen(show.outro_template_len)}. Episodes with no confident match use the fallback seconds below.</div>
       <div class="bar skipbar"><label>Fallback intro <input id="introsec" type="number" min="0" max="600" value="${show.intro_skip || 0}"> sec</label>
       <label>Fallback outro <input id="outrosec" type="number" min="0" max="600" value="${show.outro_skip || 0}"> sec</label>
-      <button class="g" id="saveskip">Save</button></div><div class="msg" id="rmsg"></div><div class="msg" id="lmsg" style="min-height:0"></div>`;
+      <button class="g" id="saveskip">Save</button></div>
+      <div class="bar skipbar"><label>Playlists: only from the last <input id="limdays" type="number" min="0" max="3650" value="${show.newer_than_days || 0}"> days</label>
+      <label>Keep last <input id="limkeep" type="number" min="0" max="1000" value="${show.keep_last || 0}"> episodes</label>
+      <button class="g" id="savelim">Save</button></div>
+      <div class="msg" style="min-height:0">These two apply to this show in every smart playlist. 0 means no limit. Nothing is deleted.</div>
+      <div class="msg" id="rmsg"></div><div class="msg" id="lmsg" style="min-height:0"></div>
+      <div id="rep" data-show="${+showId}"></div>`;
     html += eps.map((e, i) => epRow(e, i)).join('');
     $('#main').innerHTML = html;
     $('#bk').onclick = () => showShows();
@@ -191,8 +211,13 @@ async function showShows(showId) {
         + (l.phrases.length ? ' For example "' + l.phrases.slice(0, 3).join('", "') + '".' : ''); } }).catch(() => {});
     $('#saveskip').onclick = async () => {
       const r = await post(`/api/shows/${showId}/skips`, {intro_skip: +$('#introsec').value || 0, outro_skip: +$('#outrosec').value || 0});
-      eps.forEach(x => { x.intro_skip = r.intro_skip; x.outro_skip = r.outro_skip; });
+      eps.forEach(x => { x.intro_skip = r.intro_skip; x.outro_skip = r.outro_skip; }); drawBands();
       $('#rmsg').textContent = 'Saved. Intro ' + r.intro_skip + 's, outro ' + r.outro_skip + 's.'; };
+    $('#savelim').onclick = async () => {
+      const r = await post(`/api/shows/${showId}/limits`, {newer_than_days: +$('#limdays').value || 0, keep_last: +$('#limkeep').value || 0});
+      $('#rmsg').textContent = 'Saved. Playlists take ' + (r.keep_last ? 'the newest ' + r.keep_last + ' downloaded episodes' : 'all downloaded episodes')
+        + ' of this show' + (r.newer_than_days ? ', and only from the last ' + r.newer_than_days + ' days.' : '.'); };
+    loadRepeats(showId);
     $('#rescan').onclick = async () => { let found = 0, queued = 0;
       for (const e of eps.filter(x => x.playable && x.status !== 'downloaded' && x.status !== 'scanning')) {
         const r = await post(`/api/episodes/${e.id}/rescan`); if (r.mode === 'new scan queued') queued++; else found += r.ads; }
@@ -232,6 +257,54 @@ async function showShows(showId) {
   document.querySelectorAll('[data-s]').forEach(r => r.onclick = () => showShows(r.dataset.s));
 }
 
+// ---- repeated audio found across episodes (show page) ----
+const repau = new Audio(); let repStop = 0, repTimer;
+repau.ontimeupdate = () => { if (repStop && repau.currentTime >= repStop) { repau.pause(); repStop = 0; } };
+const onShow = showId => { const box = $('#rep'); return box && box.dataset.show === String(+showId) ? box : null; };
+async function loadRepeats(showId) {
+  clearTimeout(repTimer);
+  if (!onShow(showId)) return;
+  let r; try { r = await api(`/api/shows/${showId}/repeats`); } catch (_) { return; }
+  const box = onShow(showId); if (!box) return;
+  const n = Math.min(r.downloaded, r.max_compared);
+  const line = {need_more: 'Download at least two episodes of this show, then the server can look for audio they share.',
+    waiting: 'Waiting to compare the newest ' + n + ' downloaded episodes.',
+    running: 'Comparing the newest ' + n + ' downloaded episodes now. This uses the CPU only.',
+    done: r.items.length ? 'Found in more than one of the newest ' + n + ' downloaded episodes. Say what each one is. Nothing is skipped until you do.'
+      : 'Compared the newest ' + n + ' downloaded episodes. Nothing new to review.'}[r.state];
+  const guess = {intro: 'Looks like an intro.', outro: 'Looks like an outro.', ad: 'Could be an ad, a promo or a jingle.'};
+  const btn = (it, act, label) => `<button type="button" class="${it.guess === act ? 'p' : 'g'}" data-rid="${it.id}" data-act="${act}">${label}</button>`;
+  box.innerHTML = `<h3 style="margin:14px 0 4px">Repeated audio</h3><div class="msg">${line}</div>`
+    + r.items.map((it, i) => `<div class="rp"><div><b>${Math.round(it.seconds)} seconds</b>, in ${it.episodes} of ${it.compared} episodes. ${guess[it.guess] || ''}</div>
+      <div class="s">${it.occurrences.slice(0, 3).map(o => esc(o.title) + ' at ' + fmt(o.start)).join('; ')}${it.occurrences.length > 3 ? '; and ' + (it.occurrences.length - 3) + ' more' : ''}</div>
+      <div class="acts"><button type="button" class="g" data-rid="${it.id}" data-act="play" data-i="${i}">Play</button>${btn(it, 'intro', 'Use as intro')}${btn(it, 'outro', 'Use as outro')}${btn(it, 'ad', 'It is an ad')}
+      <button type="button" class="g" data-rid="${it.id}" data-act="ignore">Ignore</button></div></div>`).join('')
+    + (r.state === 'need_more' ? '' : '<div class="bar"><button type="button" class="g" data-act="scan">Compare again</button></div>');
+  box.onclick = async ev => {
+    const b = ev.target.closest('button'); if (!b) return;
+    const act = b.dataset.act, say = (m, bad) => { const el = $('#rmsg'); if (el) { el.textContent = m; el.className = 'msg' + (bad ? ' bad' : ''); } };
+    if (act === 'play') {
+      const o = r.items[+b.dataset.i].occurrences[0];
+      if (!repau.paused && repau.dataset.rid === b.dataset.rid) { repau.pause(); return; }
+      au.pause(); repau.dataset.rid = b.dataset.rid; repStop = 0;
+      repau.src = '/audio/' + o.episode_id;
+      repau.onloadedmetadata = () => { repau.currentTime = o.start; repStop = o.end; repau.play(); };
+      return; }
+    b.disabled = true;
+    try {
+      if (act === 'scan') { await post(`/api/shows/${showId}/repeats/scan`); await loadRepeats(showId); return; }
+      repau.pause();
+      if (act === 'ignore') { await post(`/api/repeats/${b.dataset.rid}/ignore`); await loadRepeats(showId); say('Ignored. That section will not be suggested again.'); return; }
+      say('Saving...');
+      const a = await post(`/api/repeats/${b.dataset.rid}/accept`, {kind: act});
+      await showShows(showId);
+      say(act === 'ad' ? 'Tagged as an ad. The server will look for it in your other episodes.' + (a.note ? ' ' + a.note : '')
+        : 'Saved as the ' + act + ' template. ' + a.queued + ' downloaded episodes are being re-checked in the background.');
+    } catch (e) { say(readErr(e), true); b.disabled = false; }
+  };
+  if (r.state === 'waiting' || r.state === 'running') repTimer = setTimeout(() => loadRepeats(showId), 5000);
+}
+
 async function openDialog() {
   const shows = await api('/api/shows');
   $('#ps').innerHTML = shows.map(s => `<option value="${s.id}">${esc(s.title || s.feed_url)}</option>`).join('');
@@ -241,7 +314,6 @@ $('#plform').addEventListener('submit', async ev => {
   if (ev.submitter && ev.submitter.value === 'cancel') return;
   const rules = { show_ids: [...$('#ps').selectedOptions].map(o => +o.value), unplayed_only: $('#pu').checked, sort: $('#po').value };
   if ($('#pm').value) rules.max_minutes = +$('#pm').value;
-  if ($('#pd').value) rules.newer_than_days = +$('#pd').value;
   await post('/api/playlists', {name: $('#pn').value, rules});
   render();
 });
@@ -312,7 +384,24 @@ function outroAction(e, t, dur, on) {
   if (s !== null && t >= s) return {type: 'skip', to: dur};
   return null;
 }
+// What to colour on the playback bar: [{kind: 'ad' | 'io', start, end}] in seconds.
+function bandRanges(e, dur) {
+  if (!e || !dur) return [];
+  const out = (e.ads || []).map(([s, t]) => ({kind: 'ad', start: s, end: t}));
+  const intro = introRange(e, dur);
+  if (intro) out.push({kind: 'io', start: intro.start, end: intro.end});
+  const os = outroStart(e, dur);
+  if (os !== null) { const m = e.markers || {}; out.push({kind: 'io', start: os, end: typeof m.outro_end === 'number' ? m.outro_end : dur}); }
+  return out.map(b => ({kind: b.kind, start: Math.max(0, Math.min(dur, b.start)), end: Math.max(0, Math.min(dur, b.end))})).filter(b => b.end > b.start);
+}
 // ---- end skip rules ----
+
+function drawBands() {
+  const e = queue[qi], dur = au.duration, bands = bandRanges(e, isFinite(dur) ? dur : 0);
+  const label = b => (b.kind === 'ad' ? 'Ad' : 'Intro/outro') + ' ' + fmt(b.start) + ' to ' + fmt(b.end);
+  $('#bands').innerHTML = bands.map(b => `<i class="${b.kind}" title="${label(b)}" style="left:${(b.start / dur * 100).toFixed(3)}%;width:${((b.end - b.start) / dur * 100).toFixed(3)}%"></i>`).join('');
+  $('#key').hidden = !bands.length;
+}
 
 // ---- player ----
 async function play(i) {
@@ -321,7 +410,9 @@ async function play(i) {
   au.src = '/audio/' + e.id;
   au.playbackRate = speed;
   e._outroDone = false; e._introDone = false; e._preview = null;
+  drawBands();
   au.onloadedmetadata = () => {
+    drawBands();
     let start = (e.position > 5 && e.position < au.duration - 10) ? e.position : 0;
     const a = introAction(e, start, au.duration, skipIO);
     if (a && a.type === 'skip') { e._introDone = true; start = a.to; toast('Skipped intro'); }
@@ -385,7 +476,8 @@ paintToggles();
 let tick = 0;
 setInterval(async () => { const e = queue[qi]; if (!e) return;
   tick++; if (e.status === 'ready' && tick % 6) return;   // every 5s while scanning, every 30s otherwise
-  try { const f = await api('/api/episodes/' + e.id); e.ads = f.ads; e.status = f.status; e.markers = f.markers; } catch (_) {} }, 5000);
+  try { const f = await api('/api/episodes/' + e.id); e.ads = f.ads; e.status = f.status; e.markers = f.markers;
+    e.intro_skip = f.intro_skip; e.outro_skip = f.outro_skip; drawBands(); } catch (_) {} }, 5000);
 
 // ---- intro/outro marking tool (show page) ----
 const IO_ROWS = [['intro_start', 'Intro starts at'], ['intro_end', 'Intro ends at'], ['outro_start', 'Outro starts at'], ['outro_end', 'Outro ends at']];
@@ -441,6 +533,7 @@ const tagSay = (m, bad) => { const el = $('#admsg'); el.textContent = m; el.clas
 let tagClock;
 async function drawTags() {
   const e = queue[qi]; if (!e) return;
+  drawBands();
   $('#adranges').innerHTML = e.ads.length ? e.ads.map(r => `<div class="it"><span>${fmtT(r[0])} to ${fmtT(r[1])}</span><span>
     <button type="button" class="g" data-act="play" data-s="${r[0]}" data-t="${r[1]}">Play</button>
     <button type="button" class="g" data-act="notad" data-s="${r[0]}" data-t="${r[1]}">Not an ad</button></span></div>`).join('')

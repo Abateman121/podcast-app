@@ -2,7 +2,7 @@
 
 A self-hosted podcast app for myself. It pulls in shows from almost any link, downloads the latest episodes, transcribes them on the GPU, and automatically skips the ads while you listen.
 
-**Current version: v0.0.14** (shown in the bottom right of the player bar on every screen)
+**Current version: v0.0.15** (shown in the bottom right of the player bar on every screen)
 
 ## Features
 
@@ -65,23 +65,45 @@ Playback:
 - Detection runs once per episode after download, on its own worker, so episodes are playable straight away.
 - A debug endpoint (`/api/episodes/{id}/markers`) shows the source, confidence, and times for an episode, and what the player will actually skip.
 
+### Repeated audio across episodes
+The app compares the newest downloaded episodes of each show and looks for sections that sound the same in more than one of them. Theme music, reused sponsor reads, promos, and jingles all show up this way. No template or tag is needed first.
+- Each show page has a **Repeated audio** list. Every entry shows how long the section is, how many of the compared episodes have it, where it sits, and a guess: intro, outro, or ad.
+- **Play** lets you hear it. Then pick **Use as intro**, **Use as outro**, **It is an ad**, or **Ignore**.
+- Intro and outro choices become the show's template, the same as **Set intro/outro**. An ad choice becomes a tagged ad, the same as **Tag ad**, so it is also found in other episodes.
+- Nothing is skipped until you choose. Ignored sections are not suggested again.
+- Sections the player already skips are left out of the list.
+- It runs by itself when the newest downloaded episodes of a show change. **Compare again** runs it on demand.
+- It is CPU only and reads each compared episode in full, about 10 seconds per hour of audio. `REPEAT_EPISODES` sets how many episodes are compared.
+- Limits: it matches the same recording, not the same words. A host reading the same ad copy live each week is not found this way. Tag those by hand so the phrases are learned.
+
 ### Smart playlists
 - Create playlists from rules:
   - Which shows to include (none selected means all)
   - Maximum length in minutes
-  - Only episodes from the last N days
   - Newest first or oldest first
   - Unplayed only
+- Two limits are set per show, on the show page, and apply to that show in every playlist:
+  - **Only from the last N days**
+  - **Keep last N episodes**: only the newest N downloaded episodes of the show. Played episodes count toward N, so a daily show set to 1 only ever offers its latest episode.
+  - 0 means no limit. These only decide what playlists show. No files are deleted.
 - Playlists update automatically as new episodes arrive and are limited to 50 episodes.
 - Playing a playlist continues through it episode by episode.
 
 ### Player
 - Fixed player bar on every screen with seek bar, elapsed time, and time remaining (adjusted for playback speed).
+- A coloured strip above the seek bar shows what was detected in the episode: red for ads, blue for the intro and outro. It updates while an episode is still being scanned and when you tag an ad.
 - Back 15 seconds and forward 30 seconds buttons.
 - **Playback speed from 0.5x to 3.0x in 0.05x steps.** Use the `−` and `+` buttons around the speed label. Tap the speed label to reset to 1.0x. The chosen speed carries over to the next episode.
 - Progress is saved every few seconds, so episodes resume where you left off. Finished episodes are marked as played and greyed out.
 - Media Session support: lock screen and headphone controls for play, pause, seek, and next track, plus episode artwork.
 - Layout follows your system light or dark theme and is safe-area aware for phones.
+
+## Changes in v0.0.15
+- New **Repeated audio** list on each show page. The app compares the newest downloaded episodes of a show and flags sections found in more than one, to confirm as intro, outro, or ad.
+- The playback bar now shows detected ads in red and the intro and outro in blue.
+- "Only from the last N days" moved from the playlist to the show, and a new per-show **Keep last N episodes** limit was added. Playlists saved earlier with a days rule keep working.
+- New settings `REPEAT_EPISODES`, `REPEAT_MIN_EPISODES`, and `REPEAT_MIN_SECONDS`.
+- New `app/repeats.py` and a sixth worker. The database upgrades itself on start.
 
 ## Changes in v0.0.14
 - Automatic intro and outro detection for every episode. It uses an audio fingerprint of the show's theme, then chapters, then the fixed seconds as a fallback. The fixed seconds are now called fallback seconds on the show page.
@@ -140,13 +162,16 @@ services:
 | `AD_AUDIO_CONFIDENCE` | `0.5` | How sure a match to a tagged ad's audio must be (0 to 1) |
 | `INTRO_WINDOW_SECONDS` | `240` | How much of the start of an episode is searched for the intro |
 | `OUTRO_WINDOW_SECONDS` | `240` | How much of the end of an episode is searched for the outro |
+| `REPEAT_EPISODES` | `5` | Newest downloaded episodes per show compared for repeated audio |
+| `REPEAT_MIN_EPISODES` | `2` | Episodes a section must appear in before it is suggested |
+| `REPEAT_MIN_SECONDS` | `5` | Shortest repeated section that is suggested |
 | `DATA_DIR` | `/data` | Where the database, audio, transcripts, and templates are stored |
 | `DISABLE_WORKERS` | unset | Set to `1` to run the web app without background workers |
 
 The `/data` volume holds the SQLite database, downloaded audio, saved transcripts, and the audio snippets behind intro/outro templates and tagged ads (`/data/templates`). The snippets let the fingerprints be rebuilt if the matching method changes.
 
 ## How it is built
-- **Backend:** Python, FastAPI, SQLite (`app/main.py`, `feeds.py`, `sources.py`, `workers.py`, `adscan.py`, `db.py`, plus `fingerprint.py`, `markers.py`, and `adlearn.py` for intro/outro detection and learning from tagged ads)
+- **Backend:** Python, FastAPI, SQLite (`app/main.py`, `feeds.py`, `sources.py`, `workers.py`, `adscan.py`, `db.py`, plus `fingerprint.py`, `markers.py`, `adlearn.py`, and `repeats.py` for intro/outro detection, learning from tagged ads, and finding repeated audio)
 - **Frontend:** a single static page, `app/static/index.html`, with no build step
-- **Workers:** five background threads for feed refresh, downloading, ad scanning, intro/outro detection, and matching tagged ads. The last two use the CPU only.
+- **Workers:** six background threads for feed refresh, downloading, ad scanning, intro/outro detection, matching tagged ads, and finding repeated audio. The last three use the CPU only.
 - **Image:** Nvidia CUDA runtime base with ffmpeg, built and published by GitHub Actions

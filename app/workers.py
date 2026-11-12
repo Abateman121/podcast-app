@@ -8,6 +8,7 @@ import adscan
 import db
 import feeds
 import markers
+import repeats
 from progress import ERRORS, PROGRESS
 
 REFRESH_MINUTES = int(os.environ.get("REFRESH_MINUTES", "30"))
@@ -196,6 +197,22 @@ def ad_audio_loop():
             time.sleep(3)
 
 
+def repeat_loop():
+    """Compare the newest episodes of each show for repeated audio. CPU only, and never in a hurry."""
+    time.sleep(20)
+    while True:
+        try:
+            conn = db.connect()
+            try:
+                busy = repeats.process_one(conn)
+            finally:
+                conn.close()
+            time.sleep(2 if busy else 30)
+        except Exception as exc:
+            print(f"[repeats] loop error: {exc}")
+            time.sleep(30)
+
+
 def start():
-    for target in (refresh_loop, download_loop, scan_loop, marker_loop, ad_audio_loop):
+    for target in (refresh_loop, download_loop, scan_loop, marker_loop, ad_audio_loop, repeat_loop):
         threading.Thread(target=target, daemon=True).start()
