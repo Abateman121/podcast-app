@@ -102,6 +102,8 @@ The app compares the newest downloaded episodes of each show and looks for secti
 - New **Repeated audio** list on each show page. The app compares the newest downloaded episodes of a show and flags sections found in more than one, to confirm as intro, outro, or ad.
 - The playback bar now shows detected ads in red and the intro and outro in blue.
 - "Only from the last N days" moved from the playlist to the show, and a new per-show **Keep last N episodes** limit was added. Playlists saved earlier with a days rule keep working.
+- New **Edit** button on each skipped range in the Tag ad dialog, to correct a start or end that is off by a few seconds. The corrected range is learned in place of the old one.
+- Fixed: tagging an ad failed with a length error when the feed listed the episode as shorter than the file.
 - New settings `REPEAT_EPISODES`, `REPEAT_MIN_EPISODES`, and `REPEAT_MIN_SECONDS`.
 - New `app/repeats.py` and a sixth worker. The database upgrades itself on start.
 
