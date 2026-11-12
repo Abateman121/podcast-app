@@ -108,7 +108,7 @@ dialog.wide{width:min(560px,94vw)}
   <div class="mrow"><span class="lab">and ends at (m:ss)</span>
     <input id="adend" type="text" inputmode="decimal" placeholder="2:05">
     <button type="button" class="g" data-f="adend" data-a="now">Now</button><button type="button" class="g" data-f="adend" data-a="-5">&minus;5s</button><button type="button" class="g" data-f="adend" data-a="5">+5s</button><button type="button" class="g" data-f="adend" data-a="play">Play</button></div>
-  <div class="bar"><button type="button" class="p" id="adsave">Save missed ad</button></div>
+  <div class="bar"><button type="button" class="p" id="adsave">Save missed ad</button><button type="button" class="g" id="adcancel" hidden>Cancel edit</button></div>
   <div class="msg" id="admsg"></div>
   <label>Skipped by mistake? Tap Not an ad on the range that was wrongly skipped.</label>
   <div class="lst" id="adranges"></div>
@@ -530,12 +530,14 @@ $('#iodlg').addEventListener('close', () => { $('#ioau').pause(); if (ioDone) { 
 const parseT = s => { s = String(s).trim(); if (!s) return NaN; const p = s.split(':').map(Number); return p.some(isNaN) ? NaN : p.reduce((a, x) => a * 60 + x, 0); };
 const fmtT = s => { s = Math.max(0, s || 0); const m = Math.floor(s / 60), x = s - m * 60; return m + ':' + (x < 10 ? '0' : '') + x.toFixed(1); };
 const tagSay = (m, bad) => { const el = $('#admsg'); el.textContent = m; el.className = 'msg' + (bad ? ' bad' : ''); };
-let tagClock;
+let tagClock, tagEdit = null;   // tagEdit is the [start, end] of the skipped range being corrected
+const setTagEdit = r => { tagEdit = r; $('#adsave').textContent = r ? 'Save new times' : 'Save missed ad'; $('#adcancel').hidden = !r; };
 async function drawTags() {
   const e = queue[qi]; if (!e) return;
   drawBands();
   $('#adranges').innerHTML = e.ads.length ? e.ads.map(r => `<div class="it"><span>${fmtT(r[0])} to ${fmtT(r[1])}</span><span>
     <button type="button" class="g" data-act="play" data-s="${r[0]}" data-t="${r[1]}">Play</button>
+    <button type="button" class="g" data-act="edit" data-s="${r[0]}" data-t="${r[1]}">Edit</button>
     <button type="button" class="g" data-act="notad" data-s="${r[0]}" data-t="${r[1]}">Not an ad</button></span></div>`).join('')
     : '<div class="msg">No ads are being skipped in this episode.</div>';
   let tags = []; try { tags = await api(`/api/episodes/${e.id}/ad-tags`); } catch (_) {}
@@ -545,6 +547,7 @@ async function drawTags() {
 function openTagDialog() {
   const e = queue[qi]; if (!e) { alert('Play an episode first.'); return; }
   const now = au.currentTime || 0;
+  setTagEdit(null);
   $('#adstart').value = fmtT(Math.max(0, now - 30)); $('#adend').value = fmtT(now);
   tagSay('Filled in with the last 30 seconds. Adjust the times, then save.');
   const clock = () => { $('#adinfo').textContent = e.title + ' (now at ' + fmtT(au.currentTime) + ')'; };
@@ -568,11 +571,19 @@ $('#addlg').onclick = async ev => {
     const s = parseT($('#adstart').value), t = parseT($('#adend').value);
     if (isNaN(s) || isNaN(t) || t <= s) { tagSay('Enter a start and an end, with the end after the start.', true); return; }
     b.disabled = true; tagSay('Saving...');
-    try { const r = await post(`/api/episodes/${e.id}/ad-tags`, {start: s, end: t, kind: 'ad'}); e.ads = r.ads;
-      tagSay('Saved. It is skipped from now on, and the server will look for this ad in your other episodes.' + (r.note ? ' ' + r.note : '')); await drawTags(); }
+    try {
+      const r = tagEdit ? await post(`/api/episodes/${e.id}/ad-ranges/adjust`, {old_start: tagEdit[0], old_end: tagEdit[1], start: s, end: t})
+        : await post(`/api/episodes/${e.id}/ad-tags`, {start: s, end: t, kind: 'ad'});
+      e.ads = r.ads;
+      tagSay((tagEdit ? 'Times changed. The ad is skipped with the new times, and the server learns it with these edges.'
+        : 'Saved. It is skipped from now on, and the server will look for this ad in your other episodes.') + (r.note ? ' ' + r.note : ''));
+      setTagEdit(null); await drawTags(); }
     catch (err) { tagSay(readErr(err), true); }
     b.disabled = false; return; }
+  if (b.id === 'adcancel') { setTagEdit(null); tagSay('Edit cancelled.'); return; }
   const s = +b.dataset.s, t = +b.dataset.t;
+  if (b.dataset.act === 'edit') { setTagEdit([s, t]); $('#adstart').value = fmtT(s); $('#adend').value = fmtT(t);
+    tagSay('Editing ' + fmtT(s) + ' to ' + fmtT(t) + '. Change the times above, use Play to check them, then save.'); return; }
   if (b.dataset.act === 'play') { e._preview = [s, t + 1]; au.currentTime = Math.max(0, s - 3); au.play(); return; }
   try {
     if (b.dataset.act === 'notad') { const r = await post(`/api/episodes/${e.id}/ad-tags`, {start: s, end: t, kind: 'not_ad'}); e.ads = r.ads; tagSay('Done. That range will play from now on.'); }

@@ -128,6 +128,13 @@ class TagIn(BaseModel):
     kind: str = "ad"
 
 
+class AdjustIn(BaseModel):
+    old_start: float
+    old_end: float
+    start: float
+    end: float
+
+
 class ProgressIn(BaseModel):
     position: float
     played: bool = False
@@ -443,6 +450,21 @@ def add_ad_tag(episode_id: int, body: TagIn):
     conn = db.connect()
     try:
         result = adlearn.add_tag(conn, episode_id, body.start, body.end, body.kind)
+        return {"id": result["id"], "note": result["note"], "ads": adlearn.current_ads(conn, episode_id)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    finally:
+        conn.close()
+
+
+@app.post("/api/episodes/{episode_id}/ad-ranges/adjust")
+def adjust_ad_range(episode_id: int, body: AdjustIn):
+    """Move the start and end of a range that is being skipped."""
+    conn = db.connect()
+    try:
+        result = adlearn.adjust_range(conn, episode_id, body.old_start, body.old_end, body.start, body.end)
         return {"id": result["id"], "note": result["note"], "ads": adlearn.current_ads(conn, episode_id)}
     except LookupError as exc:
         raise HTTPException(404, str(exc))

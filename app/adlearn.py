@@ -307,6 +307,35 @@ def delete_tag(conn, tag_id):
     return row["episode_id"]
 
 
+def adjust_range(conn, episode_id, old_start, old_end, start, end):
+    """Change the start and end of a range the player skips, wherever that range came from.
+
+    The corrected range is saved as a missed-ad tag, so it is also learned with the right edges.
+    Parts of the old range that fall outside the new one are saved as 'not ad', which keeps
+    them playing even when a later scan finds the old edges again.
+    """
+    old_start, old_end = float(old_start), float(old_end)
+    new = add_tag(conn, episode_id, start, end, "ad")   # checks the episode and the length first
+    row = conn.execute("SELECT show_id, start_sec, end_sec FROM ad_tags WHERE id = ?", (new["id"],)).fetchone()
+    start, end = row["start_sec"], row["end_sec"]
+    others = conn.execute(
+        "SELECT id, kind, start_sec, end_sec FROM ad_tags WHERE episode_id = ? AND id != ?", (episode_id, new["id"])
+    ).fetchall()
+    for tag in others:
+        replaced = tag["kind"] == "ad" and tag["start_sec"] < old_end and tag["end_sec"] > old_start
+        in_the_way = tag["kind"] == "not_ad" and tag["start_sec"] < end and tag["end_sec"] > start
+        if replaced or in_the_way:
+            delete_tag(conn, tag["id"])
+    for cut_start, cut_end in ((old_start, min(old_end, start)), (max(old_start, end), old_end)):
+        if cut_end - cut_start >= 0.05:
+            conn.execute(
+                "INSERT INTO ad_tags (episode_id, show_id, kind, start_sec, end_sec, created) VALUES (?, ?, 'not_ad', ?, ?, ?)",
+                (episode_id, row["show_id"], cut_start, cut_end, int(time.time())),
+            )
+    conn.commit()
+    return new
+
+
 def show_summary(conn, show_id):
     rows = conn.execute(
         "SELECT kind, fp IS NOT NULL AS has_audio, anchors_json FROM ad_tags WHERE show_id = ?", (show_id,)
