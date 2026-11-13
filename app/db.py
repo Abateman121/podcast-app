@@ -124,6 +124,7 @@ SHOW_COLUMNS = {
     "newer_than_days": "INTEGER",   # playlists only take episodes this recent (0 or NULL = no limit)
     "keep_last": "INTEGER",         # keep the newest N unplayed episodes downloaded (NULL = the default, 0 = none)
     "subscribed": "INTEGER DEFAULT 1",   # 0 = history only: no refresh, no downloads, not in playlists
+    "overcast_id": "TEXT",          # set by the Overcast import, so a second import finds the same show
 }
 EPISODE_COLUMNS = {
     "markers_json": "TEXT DEFAULT '{}'",
@@ -134,6 +135,7 @@ EPISODE_COLUMNS = {
     "removed": "INTEGER DEFAULT 0",       # taken off the lists by the user
     "played_at": "INTEGER DEFAULT 0",     # when it was finished, for the cleanup of played files
     "dl_priority": "INTEGER DEFAULT 0",   # 1 = next up in the player, so download and scan it first
+    "overcast_id": "TEXT",                # set by the Overcast import
 }
 PLAYLIST_COLUMNS = {
     "kind": "TEXT DEFAULT 'smart'",       # smart or builtin
@@ -173,6 +175,13 @@ def meta_bump(conn, key):
     return meta_get(conn, key)
 
 
+def meta_set(conn, key, value):
+    """Store a number. The caller commits."""
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, int(value))
+    )
+
+
 def add_columns(conn, table, columns):
     existing = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
     for column, decl in columns.items():
@@ -190,6 +199,7 @@ def init():
     add_columns(conn, "shows", SHOW_COLUMNS)
     add_columns(conn, "episodes", EPISODE_COLUMNS)
     add_columns(conn, "playlists", PLAYLIST_COLUMNS)
+    conn.execute("CREATE INDEX IF NOT EXISTS episodes_overcast ON episodes(overcast_id)")
     # Anything mid-flight when the container stopped goes back a step.
     conn.execute("UPDATE episodes SET status = 'queued' WHERE status = 'downloading'")
     conn.execute("UPDATE episodes SET status = 'downloaded' WHERE status = 'scanning'")

@@ -13,6 +13,7 @@ import adscan
 import db
 import feeds
 import markers
+import overcast
 import playlists
 import repeats
 import sources
@@ -438,6 +439,37 @@ async def import_opml(request: Request):
         raise HTTPException(400, "No podcast feeds were found in that OPML file.")
     workers.wake.set()
     return result
+
+
+class OvercastRunIn(BaseModel):
+    dry: bool = True
+    keep_days: Optional[int] = 14   # None keeps every feed episode on the lists
+
+
+@app.post("/api/import/overcast")
+async def upload_overcast(request: Request):
+    """Step 1: upload the Overcast "All data" export. It is checked and kept for the job. Nothing is imported yet."""
+    data = await request.body()
+    try:
+        return overcast.save_upload(data)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/import/overcast/run")
+def run_overcast(body: OvercastRunIn):
+    """Step 2: start the background job. dry = compare with the feeds and report, save nothing."""
+    keep_days = None if body.keep_days is None else max(0, min(3650, body.keep_days))
+    try:
+        overcast.start(body.dry, keep_days)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return overcast.status()
+
+
+@app.get("/api/import/overcast/status")
+def overcast_status():
+    return overcast.status()
 
 
 # ---------- episodes and queue ----------

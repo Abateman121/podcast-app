@@ -14,6 +14,7 @@ A self-hosted podcast app for myself. It pulls in shows from almost any link, do
   - Amazon Music podcast links (matched the same way)
   - YouTube channels and playlists (audio is downloaded with yt-dlp, latest 15 videos)
 - Import a whole subscription list from an OPML file. Imports queue only the newest episode per show so a big file does not flood the GPU.
+- **Import from Overcast**: bring over shows, play history, and playlists from an Overcast "All data" export. See "Import from Overcast" below.
 - Delete a show, which also removes its downloaded audio.
 - Shows added through Spotify or Amazon tell you which Apple Podcasts show they were matched to, so you can check it is the right one.
 
@@ -98,6 +99,16 @@ The app compares the newest downloaded episodes of each show and looks for secti
 - When an episode ends, the server works out the next one. If it is not downloaded yet, the player moves on to the next downloaded episode and says so.
 - An episode can be **removed from all playlists** without marking it played. It can be put back from the show page.
 
+### Import from Overcast
+- On overcast.fm/account, use **Export Your Data > All data**. On the **Shows** tab here, press **Import from Overcast** and pick that file.
+- The app first shows what the file holds. **Check against the feeds (dry run)** reads every feed and reports, per show, what would happen. Nothing is saved. **Import now** does the import.
+- What comes over: shows (ones you no longer follow come in as not subscribed), played and in-progress episodes with their positions, episodes you deleted in Overcast (they stay off the playlists), and your playlists with their shows, priority shows, order, and hand-picked episodes.
+- Episodes are matched to the feed by audio address, then by title and date. Episodes the feed no longer carries come in as history only: title, date, and state, with no download.
+- The export only lists episodes you played or started. So the app cannot tell which older unplayed episodes you still want. **Keep unplayed episodes from the last N days** (default 14) decides it: older episodes that you never touched are taken off the lists. They can be put back from the show page. Leave the field empty to keep them all.
+- Nothing you have here is deleted or set back. An episode played here stays played. The import can be run again with a newer export without making duplicates.
+- The import downloads nothing by itself. Afterwards the normal Keep N downloaded rule applies.
+- Details are in [docs/overcast-import.md](docs/overcast-import.md).
+
 ### Player
 - Fixed player bar on every screen with seek bar, elapsed time, and time remaining (adjusted for playback speed).
 - A coloured strip above the seek bar shows what was detected in the episode: red for ads, blue for the intro and outro. It updates while an episode is still being scanned and when you tag an ad.
@@ -106,6 +117,12 @@ The app compares the newest downloaded episodes of each show and looks for secti
 - Progress is saved every few seconds, so episodes resume where you left off. Finished episodes are marked as played and greyed out.
 - Media Session support: lock screen and headphone controls for play, pause, seek, and next track, plus episode artwork.
 - Layout follows your system light or dark theme and is safe-area aware for phones.
+
+## Changes in v0.0.17
+- New **Import from Overcast** on the Shows tab: shows, play history, positions, and playlists from an Overcast "All data" export.
+- A dry run reports what the import would do before anything is saved.
+- Older unplayed episodes that are not in the export are taken off the lists, with a setting for how many days to keep (default 14).
+- Running the import again adds only what is new.
 
 ## Changes in v0.0.16
 - Playlists were rebuilt as smart playlists: show priorities (High, Normal, Low), four orders, manual reordering, per-episode add and hide, icons and colours, continuous play, and "play the top episode next". Existing playlists are converted. Their minutes and count limits are dropped.

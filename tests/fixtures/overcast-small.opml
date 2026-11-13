@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A small Overcast "All data" export for tests. Every title, id and address is invented. -->
+<opml version="1.0">
+  <head><title>Overcast Podcast Subscriptions</title></head>
+  <body>
+    <outline text="playlists">
+      <outline type="podcast-playlist" title="Morning" smart="1" sorting="chronological" includePodcastIds="1001,1002" priorityPodcastIds="1002" sortedEpisodeIds="2004,9999"/>
+      <outline type="podcast-playlist" title="Deep Dives" smart="1" sorting="chronological-by-podcast" includePodcastIds="1001"/>
+      <outline type="podcast-playlist" title="Fresh" smart="1" sorting="reverse-chronological" includePodcastIds="1002,1003"/>
+      <outline type="podcast-playlist" title="Keepers" smart="1" sorting="reverse-chronological-by-podcast" includePodcastIds="1003" includeEpisodeIds="2101,8888"/>
+      <outline type="podcast-playlist" title="Odd" smart="1" sorting="random-shuffle" includePodcastIds="1001,7777"/>
+    </outline>
+    <outline text="feeds">
+      <outline type="rss" title="Harbor Light News" text="Harbor Light News" xmlUrl="http://127.0.0.1:8098/feed-a.xml" htmlUrl="http://127.0.0.1:8098/a" overcastId="1001" overcastAddedDate="Tue, 14 Apr 2020 03:12:55 +0000" subscribed="1">
+        <outline type="podcast-episode" overcastId="2001" pubDate="2024-03-01T06:00:00-05:00" title="Ferry Schedules Explained" url="http://127.0.0.1:8098/a/1" overcastUrl="https://overcast.fm/+AAAA2001" enclosureUrl="http://audio.example.test/harbor/ep1.mp3?source=feed" userUpdatedDate="2024-03-02T08:15:00-05:00" userDeleted="1" played="1"/>
+        <outline type="podcast-episode" overcastId="2002" pubDate="2024-03-08T06:00:00-05:00" title="The Lighthouse Keeper" url="http://127.0.0.1:8098/a/2" overcastUrl="https://overcast.fm/+AAAA2002" enclosureUrl="https://tracker.example.test/e/stats.example.test/id/audio.example.test/harbor/ep2.mp3?awCollectionId=1&amp;key=old" userUpdatedDate="2024-03-09T09:00:00-05:00" played="1"/>
+        <outline type="podcast-episode" overcastId="2003" pubDate="2024-03-15T06:00:00-05:00" title="Tide Tables: A Short History" url="http://127.0.0.1:8098/a/3" overcastUrl="https://overcast.fm/+AAAA2003" enclosureUrl="http://old-host.example.test/moved/1111.mp3" userUpdatedDate="2024-03-16T10:00:00-05:00" userDeleted="1" progress="754"/>
+        <outline type="podcast-episode" overcastId="2004" pubDate="2024-03-22T06:00:00-05:00" title="Fog Signals" url="http://127.0.0.1:8098/a/4" overcastUrl="https://overcast.fm/+AAAA2004" enclosureUrl="http://audio.example.test/harbor/ep4.mp3" userUpdatedDate="2024-03-23T11:00:00-05:00" progress="120"/>
+        <outline type="podcast-episode" overcastId="2005" pubDate="2019-01-04T06:00:00-05:00" title="Pilot Episode" url="http://127.0.0.1:8098/a/0" overcastUrl="https://overcast.fm/+AAAA2005" enclosureUrl="http://audio.example.test/harbor/pilot.mp3" userUpdatedDate="2019-01-05T07:30:00-05:00" userDeleted="1" played="1"/>
+      </outline>
+      <outline type="rss" title="Quiet Orbit" text="Quiet Orbit" xmlUrl="http://127.0.0.1:8098/feed-b.xml" htmlUrl="http://127.0.0.1:8098/b" overcastId="1002" overcastAddedDate="Mon, 03 Jan 2022 18:40:00 +0000" subscribed="1">
+        <outline type="podcast-episode" overcastId="2101" pubDate="2024-02-10T12:00:00+00:00" title="Small Moons" url="http://127.0.0.1:8098/b/1" overcastUrl="https://overcast.fm/+AAAA2101" enclosureUrl="http://audio.example.test/orbit/moons.mp3" userUpdatedDate="2024-02-11T20:00:00+00:00" userDeleted="1" played="1"/>
+        <outline type="podcast-episode" overcastId="2102" pubDate="2024-02-17T12:00:00+00:00" title="Slow Comets" url="http://127.0.0.1:8098/b/2" overcastUrl="https://overcast.fm/+AAAA2102" enclosureUrl="http://audio.example.test/orbit/comets.mp3" userUpdatedDate="2024-02-18T21:00:00+00:00" played="1" progress="30"/>
+      </outline>
+      <outline type="rss" title="Lantern Archive" text="Lantern Archive" xmlUrl="http://127.0.0.1:8098/feed-c.xml" htmlUrl="http://127.0.0.1:8098/c" overcastId="1003" overcastAddedDate="Fri, 09 Aug 2019 11:05:00 +0000">
+        <outline type="podcast-episode" overcastId="2201" pubDate="2020-05-01T09:00:00+01:00" title="The Paper Map" url="http://127.0.0.1:8098/c/1" overcastUrl="https://overcast.fm/+AAAA2201" enclosureUrl="http://audio.example.test/lantern/map.mp3" userUpdatedDate="2020-05-03T09:00:00+01:00" userDeleted="1" played="1"/>
+        <outline type="podcast-episode" overcastId="2202" pubDate="2020-05-08T09:00:00+01:00" title="The Brass Key" url="http://127.0.0.1:8098/c/2" overcastUrl="https://overcast.fm/+AAAA2202" enclosureUrl="http://audio.example.test/lantern/key.mp3" userUpdatedDate="2020-05-09T09:00:00+01:00" userDeleted="1" progress="45.5"/>
+      </outline>
+    </outline>
+  </body>
+</opml>

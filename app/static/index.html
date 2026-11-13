@@ -101,6 +101,18 @@ dialog.wide{width:min(560px,94vw)}
   <div class="bar" style="justify-content:flex-end"><button class="g" value="cancel">Close</button></div>
 </form></dialog>
 
+<dialog id="ocdlg" class="wide"><form method="dialog">
+  <h3 style="margin:0 0 4px">Import from Overcast</h3>
+  <div class="msg" id="ocsum"></div>
+  <div class="mrow"><span class="lab">Keep unplayed episodes from the last (days). Older ones that you never touched are taken off the lists. Leave empty to keep all.</span>
+    <input id="ocdays" type="number" min="0" max="3650" value="14"></div>
+  <div class="acts"><button type="button" class="g" id="ocdry">Check against the feeds (dry run)</button><button type="button" class="p" id="ocrun">Import now</button></div>
+  <progress id="ocbar" value="0" max="1" style="width:100%" hidden></progress>
+  <div class="msg" id="ocmsg"></div>
+  <div id="ocout" style="max-height:50vh;overflow:auto"></div>
+  <div class="bar" style="justify-content:flex-end"><button class="g" value="cancel">Close</button></div>
+</form></dialog>
+
 <dialog id="iodlg" class="wide"><form method="dialog">
   <h3 style="margin:0 0 4px">Set intro/outro</h3>
   <div class="msg" id="iostat"></div>
@@ -145,7 +157,7 @@ dialog.wide{width:min(560px,94vw)}
     <button class="g" id="tagad" title="Tag a missed ad, or an ad that was skipped by mistake">Tag ad</button>
     <span class="tm" id="rem">0:00</span>
   </div>
-  <div id="foot"><div class="key" id="key" hidden><i class="ad"></i>Ad<i class="io"></i>Intro/outro</div><span></span><div id="ver">v0.0.16</div></div>
+  <div id="foot"><div class="key" id="key" hidden><i class="ad"></i>Ad<i class="io"></i>Intro/outro</div><span></span><div id="ver">v0.0.17</div></div>
 </div></div>
 <audio id="au" preload="auto"></audio>
 
@@ -396,7 +408,8 @@ async function showShows(showId) {
   }
   const shows = await api('/api/shows');
   let html = `<div class="bar"><input id="feed" type="text" placeholder="Paste a link: RSS, Apple Podcasts, Spotify, Amazon, or YouTube"><button class="p" id="addf">Add show</button></div>
-    <div class="bar"><button class="g" id="opmlbtn">Import OPML file</button><input id="opml" type="file" accept=".opml,.xml,text/xml" hidden></div>
+    <div class="bar"><button class="g" id="opmlbtn">Import OPML file</button><input id="opml" type="file" accept=".opml,.xml,text/xml" hidden>
+      <button class="g" id="ocbtn">Import from Overcast</button><input id="ocfile" type="file" accept=".opml,.xml,text/xml" hidden></div>
     <div class="msg" id="smsg"></div>`;
   if (!shows.length) html += `<div class="empty">No shows yet. Paste a link above or import an OPML file.</div>`;
   html += shows.map(s => `<div class="row" data-s="${s.id}">${s.image ? `<img src="${esc(s.image)}" alt="">` : '<div class="ph"></div>'}
@@ -415,10 +428,63 @@ async function showShows(showId) {
     try { const r = await api('/api/import/opml', {method: 'POST', headers: {'Content-Type': 'text/xml'}, body: await f.text()});
       await showShows(); $('#smsg').textContent = 'Imported ' + r.added + ' new shows (' + r.skipped + ' already added). The newest episodes of each are downloaded.'; }
     catch (e) { say(readErr(e), true); } };
+  $('#ocbtn').onclick = () => $('#ocfile').click();
+  $('#ocfile').onchange = async ev => { const f = ev.target.files[0]; ev.target.value = ''; if (!f) return; say('Reading the Overcast file...');
+    try { const r = await api('/api/import/overcast', {method: 'POST', headers: {'Content-Type': 'text/xml'}, body: f});
+      say(''); openOvercast(r); }
+    catch (e) { say(readErr(e), true); } };
   document.querySelectorAll('[data-delshow]').forEach(b => b.onclick = async ev => { ev.stopPropagation();
     if (!confirm('Delete "' + b.dataset.name + '" and its downloaded audio?')) return;
     await api('/api/shows/' + b.dataset.delshow, {method: 'DELETE'}); showShows(); });
   document.querySelectorAll('[data-s]').forEach(r => r.onclick = () => showShows(r.dataset.s));
+}
+
+// ---- Overcast import (Shows tab) ----
+let ocTimer = null;
+function openOvercast(sum) {
+  $('#ocsum').textContent = 'The file has ' + sum.feeds + ' shows (' + sum.subscribed + ' subscribed), ' + sum.episodes + ' episodes ('
+    + sum.played + ' played, ' + sum.in_progress + ' in progress) and ' + sum.playlists + ' playlists. Nothing is imported yet.';
+  $('#ocmsg').textContent = ''; $('#ocmsg').className = 'msg'; $('#ocout').innerHTML = ''; $('#ocbar').hidden = true;
+  $('#ocdry').disabled = $('#ocrun').disabled = false;
+  $('#ocdry').onclick = () => runOvercast(true);
+  $('#ocrun').onclick = () => { if (confirm('Import the Overcast data now? Play history and playlists are added. Nothing you have here is deleted.')) runOvercast(false); };
+  $('#ocdlg').showModal();
+}
+async function runOvercast(dry) {
+  const raw = $('#ocdays').value.trim();
+  const msg = (m, bad) => { $('#ocmsg').textContent = m; $('#ocmsg').className = 'msg' + (bad ? ' bad' : ''); };
+  $('#ocdry').disabled = $('#ocrun').disabled = true; $('#ocout').innerHTML = '';
+  try { await post('/api/import/overcast/run', {dry: dry, keep_days: raw === '' ? null : +raw}); }
+  catch (e) { msg(readErr(e), true); $('#ocdry').disabled = $('#ocrun').disabled = false; return; }
+  clearInterval(ocTimer);
+  const tick = async () => {
+    let s; try { s = await api('/api/import/overcast/status'); } catch (e) { return; }
+    if (s.state === 'running') { $('#ocbar').hidden = false; $('#ocbar').max = s.total || 1; $('#ocbar').value = s.step || 0;
+      msg((dry ? 'Checking' : 'Importing') + (s.total ? ' (' + s.step + '/' + s.total + ') ' : ' ') + (s.label || '')); return; }
+    clearInterval(ocTimer); $('#ocbar').hidden = true; $('#ocdry').disabled = $('#ocrun').disabled = false;
+    if (s.state === 'error') { msg('The import failed: ' + s.error, true); return; }
+    if (s.state === 'done') { msg(''); showOvercastResult(s.result); if (!s.result.dry && tab === 'sh') showShows(); }
+  };
+  ocTimer = setInterval(tick, 1000); tick();
+}
+function showOvercastResult(r) {
+  const t = r.sum, td = v => '<td style="text-align:right;padding:2px 6px">' + v + '</td>';
+  let h = '<p><b>' + (r.dry ? 'Dry run. Nothing was saved.' : 'Import finished.') + '</b> '
+    + (t.linked ? t.linked + ' episodes were already imported. ' : '')
+    + (t.exact + t.normalized + t.title_match) + ' episodes ' + (r.dry ? 'match' : 'matched') + ' the feeds, '
+    + t.history + ' are no longer in the feeds and ' + (r.dry ? 'come in' : 'came in') + ' as history only. '
+    + t.changed + ' rows ' + (r.dry ? 'would change' : 'changed') + '. '
+    + t.keep_current + ' unplayed episodes stay on the lists, ' + t.mark_removed + ' older ones ' + (r.dry ? 'would be' : 'were') + ' taken off. '
+    + 'About ' + r.may_download + ' episodes will be downloaded afterwards by the keep N rule.</p>';
+  if (r.database) h += '<p>In the database now: ' + r.database.feeds + ' Overcast shows, ' + r.database.episodes + ' Overcast episodes, '
+    + r.database.played + ' played, ' + r.database.in_progress + ' in progress, ' + r.database.playlists + ' Overcast playlists.</p>';
+  if (r.warnings.length) h += '<p class="msg bad">' + r.warnings.map(esc).join('<br>') + '</p>';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:13px"><tr><th style="text-align:left">Show</th><th>In file</th><th>Matched</th><th>History</th><th>Stay</th><th>Taken off</th></tr>'
+    + r.feeds.map(f => '<tr><td style="padding:2px 6px 2px 0">' + esc(f.title) + (f.subscribed ? '' : ' (not subscribed)') + (f.feed_error ? ' (feed error)' : '') + '</td>'
+      + td(f.export_episodes) + td(f.linked + f.exact + f.normalized + f.title_match) + td(f.history) + td(f.keep_current) + td(f.mark_removed) + '</tr>').join('') + '</table>';
+  h += '<p><b>Playlists</b></p>' + r.playlists.map(p => '<div class="s">' + esc(p.title) + ': ' + p.shows + ' shows, ' + p.high + ' high priority, sorted ' + esc(String(p.sort).replace(/_/g, ' '))
+    + (p.include ? ', ' + p.include + ' included episodes' : '') + (p.manual ? ', ' + p.manual + ' in your own order' : '') + (p.exists ? ' (updates the one from an earlier import)' : '') + '</div>').join('');
+  $('#ocout').innerHTML = h;
 }
 
 // ---- repeated audio found across episodes (show page) ----
