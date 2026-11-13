@@ -69,23 +69,36 @@ dialog.wide{width:min(560px,94vw)}
 .mrow button{padding:6px 10px;font:inherit;cursor:pointer}
 .lst .it{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}
 .lst .it button{padding:4px 8px;font:inherit;cursor:pointer}
+.row.off{opacity:.55}
+.row.drag{outline:2px dashed var(--acc)}
+.tools{display:flex;gap:4px;flex:none}.tools button{padding:6px 9px}
+.plg{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.plb{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-left:5px solid var(--acc);border-radius:10px;padding:14px 12px;font:inherit;color:var(--ink);cursor:pointer;text-align:left}
+.plb .nm{flex:1;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.plb .ct{color:var(--mute);font-variant-numeric:tabular-nums}
+.plb.none{opacity:.5}
+.chk{display:flex!important;align-items:center;gap:8px;color:var(--ink)!important}.chk input{width:auto}
+.acts{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.lst .it select{width:auto}
 </style>
 </head>
 <body>
 <header><nav id="tabs">
-  <button data-t="pl" class="on">Playlists</button><button data-t="sh">Shows</button><button data-t="qu">Queue</button>
+  <button data-t="pl" class="on">Playlists</button><button data-t="sh">Shows</button><button data-t="qu">Downloads</button>
 </nav></header>
 <main id="main"></main>
 
-<dialog id="dlg"><form method="dialog" id="plform">
-  <h3 style="margin:0 0 4px">New smart playlist</h3>
-  <label>Name</label><input id="pn" required>
-  <label>Shows (none selected means all)</label><select id="ps" multiple size="4"></select>
-  <label>Max length (minutes, optional)</label><input id="pm" type="number" min="1">
-  <label>Order</label><select id="po"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select>
-  <label><input id="pu" type="checkbox" checked style="width:auto"> Unplayed only</label>
-  <div class="msg">"Only from the last days" and "keep last episodes" are set per show, on the show's page.</div>
-  <div class="bar" style="justify-content:flex-end"><button class="g" value="cancel">Cancel</button><button class="p" value="ok">Save playlist</button></div>
+<dialog id="psdlg" class="wide"><form method="dialog">
+  <h3 style="margin:0 0 4px" id="pshead">Playlist settings</h3>
+  <div id="psbody"></div>
+  <div class="msg" id="psmsg"></div>
+  <div class="bar" style="justify-content:space-between;flex-wrap:wrap"><button type="button" class="g" id="psdel">Delete playlist</button>
+    <span><button class="g" value="cancel">Cancel</button> <button type="button" class="p" id="pssave">Save</button></span></div>
+</form></dialog>
+
+<dialog id="epdlg"><form method="dialog">
+  <div id="epbody"></div>
+  <div class="bar" style="justify-content:flex-end"><button class="g" value="cancel">Close</button></div>
 </form></dialog>
 
 <dialog id="iodlg" class="wide"><form method="dialog">
@@ -132,7 +145,7 @@ dialog.wide{width:min(560px,94vw)}
     <button class="g" id="tagad" title="Tag a missed ad, or an ad that was skipped by mistake">Tag ad</button>
     <span class="tm" id="rem">0:00</span>
   </div>
-  <div id="foot"><div class="key" id="key" hidden><i class="ad"></i>Ad<i class="io"></i>Intro/outro</div><span></span><div id="ver">v0.0.15</div></div>
+  <div id="foot"><div class="key" id="key" hidden><i class="ad"></i>Ad<i class="io"></i>Intro/outro</div><span></span><div id="ver">v0.0.16</div></div>
 </div></div>
 <audio id="au" preload="auto"></audio>
 
@@ -151,36 +164,180 @@ const fmt = s => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s/3
 const api = async (url, opt) => { const r = await fetch(url, opt); if (!r.ok) throw new Error(await r.text()); return r.json(); };
 const post = (url, body) => api(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})});
 
-function epRow(e, idx) {
+const send = (method, url, body) => api(url, {method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})});
+const readErr = e => { try { return JSON.parse(e.message).detail || e.message; } catch (_) { return e.message; } };
+// Where the playing episode came from: {type: 'playlist' | 'show', id}. The server uses it to pick what plays next.
+let ctx = null, curPl = null;
+
+// opt (optional): {move: show up/down buttons and allow dragging}. With opt the row gets a More button.
+function epRow(e, idx, opt) {
   const mins = e.duration ? Math.round(e.duration/60) + ' min' : '';
   const labels = {queued: 'in download queue', downloading: 'downloading', downloaded: 'waiting to scan', scanning: 'scanning for ads',
     error: 'download failed', scan_error: 'ad scan failed', new: 'not downloaded'};
   const state = e.status === 'ready' ? (e.ads.length ? e.ads.length + ' ad' + (e.ads.length > 1 ? 's' : '') + ' found' : 'no ads found') : (labels[e.status] || e.status);
   const img = e.show_image ? `<img src="${esc(e.show_image)}" alt="">` : '<div class="ph"></div>';
-  return `<div class="row ${e.played ? 'played' : ''}" data-i="${idx}">${img}<div><div class="t">${esc(e.title)}</div>
-    <div class="s">${esc(e.show_title)} &middot; ${mins} &middot; ${state}</div></div></div>`;
+  const canGet = e.status === 'new' || e.status === 'error';
+  const tools = opt ? `<span class="tools">${opt.move ? '<button class="g" data-mv="-1" title="Move up">&uarr;</button><button class="g" data-mv="1" title="Move down">&darr;</button>' : ''}`
+    + `${canGet ? '<button class="g" data-dl="1">Download</button>' : ''}<button class="g" data-more="1" title="More">&#8943;</button></span>` : '';
+  return `<div class="row ${e.played ? 'played' : ''} ${e.playable ? '' : 'off'}" data-i="${idx}" ${opt && opt.move ? 'draggable="true"' : ''}>${img}
+    <div style="flex:1;min-width:0"><div class="t">${e.starred ? '&#9733; ' : ''}${esc(e.title)}</div>
+    <div class="s">${esc(e.show_title)} &middot; ${mins} &middot; ${state}${e.removed ? ' &middot; removed' : ''}</div></div>${tools}</div>`;
 }
 
+// Clicks on episode rows. o: {ctx, pl (playlist, when on a playlist screen), reload(), say(msg, bad)}
+function wireRows(eps, o) {
+  const setOrder = async ids => { await send('PUT', `/api/playlists/${o.pl.id}/order`, {episode_ids: ids}); await o.reload(); };
+  const move = (from, to) => { if (to < 0 || to >= eps.length || to === from) return;
+    const ids = eps.map(x => x.id); ids.splice(to, 0, ids.splice(from, 1)[0]); setOrder(ids); };
+  const download = async e => {
+    if (['queued', 'downloading'].includes(e.status)) { o.say('Already in the download queue. Check the Downloads tab.'); return; }
+    await post(`/api/episodes/${e.id}/download`); await o.reload(); o.say('Added to the download queue. Watch it on the Downloads tab.'); };
+  let dragFrom = null;
+  document.querySelectorAll('#main .row[data-i]').forEach(r => {
+    const i = +r.dataset.i, e = eps[i];
+    r.onclick = ev => {
+      const b = ev.target.closest('button');
+      if (b && b.dataset.more) { openEp(e, o); return; }
+      if (b && b.dataset.mv) { move(i, i + (+b.dataset.mv)); return; }
+      if (b && b.dataset.dl || !e.playable) { download(e); return; }
+      playEp(e, o.ctx); };
+    if (!r.draggable) return;
+    r.ondragstart = ev => { dragFrom = i; ev.dataTransfer.effectAllowed = 'move'; };
+    r.ondragover = ev => { if (dragFrom !== null) { ev.preventDefault(); r.classList.add('drag'); } };
+    r.ondragleave = () => r.classList.remove('drag');
+    r.ondrop = ev => { ev.preventDefault(); r.classList.remove('drag'); const from = dragFrom; dragFrom = null; if (from !== null) move(from, i); };
+  });
+}
+
+// ---- episode actions (the More button on a row) ----
+async function openEp(e, o) {
+  let pls = []; try { pls = (await api('/api/playlists')).filter(p => p.kind === 'smart'); } catch (_) {}
+  const b = (act, label) => `<button type="button" class="g" data-act="${act}">${label}</button>`;
+  const smart = o.pl && o.pl.kind === 'smart';
+  $('#epbody').innerHTML = `<h3 style="margin:0 0 4px">${esc(e.title)}</h3><div class="msg">${esc(e.show_title)}</div><div class="acts">`
+    + b('next', 'Play Next') + b('last', 'Play Last') + (o.pl && o.pl.builtin_type === 'queue' ? b('unq', 'Take off Up Next') : '')
+    + b('star', e.starred ? 'Remove star' : 'Star') + b('played', e.played ? 'Mark unplayed' : 'Mark played')
+    + (e.status === 'new' || e.status === 'error' ? b('dl', 'Download') : '')
+    + (smart ? b('excl', 'Hide from this playlist') : '')
+    + b('rm', e.removed ? 'Put back on playlists' : 'Remove from all playlists') + '</div>'
+    + '<div class="msg">Play Next and Play Last put the episode on the Up Next playlist. A starred episode keeps its file after it is played.</div>'
+    + (pls.length ? `<label>Add to a playlist</label><div class="bar"><select id="epadd">${pls.map(p => `<option value="${p.id}">${esc(p.title)}</option>`).join('')}</select>${b('incl', 'Add')}</div>` : '');
+  $('#epbody').onclick = async ev => {
+    const btn = ev.target.closest('button[data-act]'); if (!btn) return;
+    const a = btn.dataset.act, ep = '/api/episodes/' + e.id; let msg = '', bad = false;
+    try {
+      if (a === 'next') { await post(ep + '/play-next'); msg = 'Added to the top of Up Next.'; }
+      else if (a === 'last') { await post(ep + '/play-last'); msg = 'Added to the end of Up Next.'; }
+      else if (a === 'unq') { await post(ep + '/unqueue'); msg = 'Taken off Up Next.'; }
+      else if (a === 'star') { await post(ep + '/star', {on: !e.starred}); msg = e.starred ? 'Star removed.' : 'Starred.'; }
+      else if (a === 'played') { await post(ep + '/played', {on: !e.played}); msg = e.played ? 'Marked unplayed.' : 'Marked played.'; }
+      else if (a === 'dl') { await post(ep + '/download'); msg = 'Added to the download queue.'; }
+      else if (a === 'excl') { await post(`/api/playlists/${o.pl.id}/overrides`, {episode_id: e.id, action: 'exclude'}); msg = 'Hidden from this playlist. Undo it in the playlist settings.'; }
+      else if (a === 'rm') { await post(ep + '/remove', {on: !e.removed}); msg = e.removed ? 'Back on the playlists.' : 'Removed from all playlists.'; }
+      else if (a === 'incl') { await post(`/api/playlists/${$('#epadd').value}/overrides`, {episode_id: e.id, action: 'include'}); msg = 'Added to that playlist.'; }
+    } catch (err) { msg = readErr(err); bad = true; }
+    $('#epdlg').close(); await o.reload(); o.say(msg, bad); };
+  $('#epdlg').showModal();
+}
+
+// ---- playlists ----
+const sayIn = id => (m, bad) => { const el = $(id); if (el) { el.textContent = m; el.className = 'msg' + (bad ? ' bad' : ''); } };
+const okColor = c => /^#[0-9a-f]{6}$/i.test(c || '') ? c : '';
+
 async function showPlaylists() {
+  curPl = null;
   const pls = await api('/api/playlists');
-  let html = `<div class="bar"><button class="p" id="newpl">New smart playlist</button><button class="g" id="refresh">Check for episodes</button></div>`;
-  if (!pls.length) html += `<div class="empty">No playlists yet. Create one with rules like unplayed episodes under 45 minutes.</div>`;
-  for (const p of pls) {
-    const eps = await api(`/api/playlists/${p.id}/episodes`);
-    html += `<h3 style="margin:18px 0 6px">${esc(p.name)} <span class="s" style="font-weight:400;color:var(--mute)">${eps.length} episodes</span>
-      <button class="g" data-del="${p.id}" style="float:right">Delete</button></h3>`;
-    html += eps.map((e, i) => epRow(e, p.id + ':' + i)).join('') || `<div class="empty">Nothing matches yet.</div>`;
-    p.eps = eps;
-  }
-  $('#main').innerHTML = html;
-  window._pl = pls;
-  $('#newpl').onclick = openDialog;
+  $('#main').innerHTML = `<div class="bar"><button class="p" id="newpl">New smart playlist</button><button class="g" id="refresh">Check for episodes</button></div>
+    <div class="plg">` + pls.map(p => `<button class="plb ${p.unplayed ? '' : 'none'}" data-pl="${p.id}" style="${okColor(p.color) ? 'border-left-color:' + p.color : ''}">
+      <span>${esc(p.icon || '♪')}</span><span class="nm">${esc(p.title)}</span><span class="ct">${p.unplayed}</span></button>`).join('') + `</div>
+    <div class="msg">The number is how many unplayed episodes a playlist holds. Episodes that are not downloaded yet are listed too. The next one up is downloaded while you listen.</div>`;
+  $('#newpl').onclick = () => openPlSettings(null);
   $('#refresh').onclick = () => post('/api/refresh');
-  document.querySelectorAll('[data-del]').forEach(b => b.onclick = async ev => { ev.stopPropagation();
-    if (confirm('Delete this playlist?')) { await api('/api/playlists/' + b.dataset.del, {method:'DELETE'}); render(); } });
-  document.querySelectorAll('.row').forEach(r => r.onclick = () => {
-    const [pid, i] = r.dataset.i.split(':').map(Number);
-    const p = window._pl.find(x => x.id === pid); queue = p.eps; play(i); });
+  document.querySelectorAll('[data-pl]').forEach(b => b.onclick = () => showPlaylist(+b.dataset.pl));
+}
+
+async function showPlaylist(id) {
+  const [p, page] = await Promise.all([api('/api/playlists/' + id), api(`/api/playlists/${id}/episodes?limit=300`)]);
+  if (tab !== 'pl') return;
+  curPl = p; const eps = page.episodes;
+  const sorts = {oldest: 'oldest first', newest: 'newest first', oldest_by_show: 'oldest first, grouped by show', newest_by_show: 'newest first, grouped by show'};
+  const clear = p.manual && p.builtin_type !== 'queue' ? '<button class="g" id="plclear">Clear my order</button>' : '';
+  $('#main').innerHTML = `<div class="bar"><button class="g" id="bk">Back to playlists</button><button class="g" id="plset">Settings</button>${clear}</div>
+    <h3 style="margin:10px 0 2px">${esc(p.icon)} ${esc(p.title)} <span style="font-weight:400;color:var(--mute)">${page.total} episodes, ${sorts[p.sort]}</span></h3>
+    <div class="msg" id="pmsg"></div>`
+    + (eps.map((e, i) => epRow(e, i, {move: true})).join('') || `<div class="empty">${p.builtin_type === 'queue' ? 'Up Next is empty. Use Play Next or Play Last on any episode.' : 'Nothing here right now.'}</div>`)
+    + (page.total > eps.length ? `<div class="msg">Showing the first ${eps.length} of ${page.total}.</div>` : '');
+  $('#bk').onclick = showPlaylists;
+  $('#plset').onclick = () => openPlSettings(id);
+  if (clear) $('#plclear').onclick = async () => { await send('PUT', `/api/playlists/${id}/order`, {episode_ids: []}); showPlaylist(id); };
+  wireRows(eps, {ctx: {type: 'playlist', id}, pl: p, reload: () => showPlaylist(id), say: sayIn('#pmsg')});
+}
+
+// ---- playlist settings ----
+const PL_COLORS = [['', 'Default'], ['#e8700c', 'Orange'], ['#d43f3f', 'Red'], ['#2e9e5b', 'Green'], ['#2f7fe0', 'Blue'], ['#8a56d8', 'Purple'], ['#7a8490', 'Grey']];
+async function openPlSettings(id) {
+  const shows = (await api('/api/shows')).filter(s => s.subscribed);
+  const p = id ? await api('/api/playlists/' + id) : {title: '', icon: '', color: '', sort: 'oldest', priority_mode: 'by_rank', include_all_shows: false,
+    play_top_next: false, continuous: true, shows: [], include: [], exclude: [], manual: 0, kind: 'smart'};
+  const smart = p.kind === 'smart', say = sayIn('#psmsg');
+  const pri = {}; p.shows.forEach(s => { pri[s.show_id] = s.priority; });
+  let high = p.shows.filter(s => s.priority === 'high').map(s => s.show_id);   // in rank order
+  const opt = (v, label, cur) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${label}</option>`;
+  const check = (fid, label, on) => `<label class="chk"><input type="checkbox" id="${fid}" ${on ? 'checked' : ''}> ${label}</label>`;
+  $('#pshead').textContent = id ? 'Playlist settings' : 'New smart playlist';
+  $('#psbody').innerHTML = `<label>Title</label><input id="pst" value="${esc(p.title)}" ${smart ? '' : 'disabled'}>
+    <label>Icon (one emoji or character)</label><input id="psi" maxlength="4" value="${esc(p.icon)}">
+    <label>Colour</label><select id="psc">${PL_COLORS.map(([v, l]) => opt(v, l, p.color || '')).join('')}</select>
+    <label>Order</label><select id="pso">${opt('oldest', 'Oldest first', p.sort)}${opt('newest', 'Newest first', p.sort)}${opt('oldest_by_show', 'Oldest first, grouped by show', p.sort)}${opt('newest_by_show', 'Newest first, grouped by show', p.sort)}</select>
+    ${check('psn', 'When an episode ends, play the next one', p.continuous)}
+    ${check('pstop', 'Always play the top episode next', p.play_top_next)}`
+    + (smart ? `${check('psall', 'Include every show I subscribe to', p.include_all_shows)}
+    <label>Shows. Episodes of Priority shows (High) come first. Low comes last.</label><div class="lst" id="pssh"></div>
+    <label>Priority shows are ordered</label><select id="psm">${opt('by_rank', 'By show, in the order above', p.priority_mode)}${opt('by_date', 'By date, mixed together', p.priority_mode)}</select>
+    <label>Episodes added by hand</label><div class="lst" id="psinc"></div>
+    <label>Episodes hidden from this playlist</label><div class="lst" id="psexc"></div>` : '');
+  const drawShows = () => {
+    const all = $('#psall').checked, title = s => s.title || s.feed_url;
+    const sorted = [...high.map(h => shows.find(s => s.id === h)).filter(Boolean), ...shows.filter(s => !high.includes(s.id))];
+    $('#pssh').innerHTML = sorted.map(s => { const cur = pri[s.id] || '', hi = high.indexOf(s.id);
+      return `<div class="it"><span>${esc(title(s))}</span><span>${hi >= 0 ? `<button type="button" class="g" data-up="${s.id}">&uarr;</button> <button type="button" class="g" data-down="${s.id}">&darr;</button> ` : ''}
+        <select data-show="${s.id}">${opt('', all ? 'In (normal)' : 'Not in playlist', cur)}${opt('high', 'High', cur)}${opt('normal', 'Normal', cur)}${opt('low', 'Low', cur)}</select></span></div>`; }).join('')
+      || '<div class="msg">No shows yet.</div>';
+  };
+  const drawOverrides = () => { for (const [box, list] of [['#psinc', p.include], ['#psexc', p.exclude]])
+    $(box).innerHTML = list.map(x => `<div class="it"><span>${esc(x.title)} (${esc(x.show_title)})</span><button type="button" class="g" data-undo="${x.episode_id}">Undo</button></div>`).join('') || '<div class="msg">None.</div>'; };
+  if (smart) {
+    drawShows(); drawOverrides();
+    $('#psall').onchange = drawShows;
+    $('#pssh').onchange = ev => { const sid = +ev.target.dataset.show, v = ev.target.value;
+      if (v) pri[sid] = v; else delete pri[sid];
+      high = high.filter(h => h !== sid); if (v === 'high') high.push(sid); drawShows(); };
+    $('#pssh').onclick = ev => { const b = ev.target.closest('button'); if (!b) return;
+      const sid = +(b.dataset.up || b.dataset.down), i = high.indexOf(sid), j = i + (b.dataset.up ? -1 : 1);
+      if (i < 0 || j < 0 || j >= high.length) return;
+      [high[i], high[j]] = [high[j], high[i]]; drawShows(); };
+    for (const box of ['#psinc', '#psexc']) $(box).onclick = async ev => { const b = ev.target.closest('button[data-undo]'); if (!b) return;
+      try { await post(`/api/playlists/${id}/overrides`, {episode_id: +b.dataset.undo, action: 'clear'}); } catch (e) { say(readErr(e), true); return; }
+      p.include = p.include.filter(x => x.episode_id !== +b.dataset.undo); p.exclude = p.exclude.filter(x => x.episode_id !== +b.dataset.undo); drawOverrides(); };
+  }
+  $('#psdel').hidden = !id || !smart;
+  $('#psdel').onclick = async () => { if (!confirm('Delete the playlist "' + p.title + '"? No episodes are deleted.')) return;
+    await api('/api/playlists/' + id, {method: 'DELETE'}); $('#psdlg').close(); showPlaylists(); };
+  $('#pssave').onclick = async () => {
+    const f = {icon: $('#psi').value.trim(), color: $('#psc').value, sort: $('#pso').value, continuous: $('#psn').checked, play_top_next: $('#pstop').checked};
+    if (smart) { f.title = $('#pst').value.trim(); f.include_all_shows = $('#psall').checked; f.priority_mode = $('#psm').value;
+      if (!f.title) { say('Give the playlist a title.', true); return; } }
+    if (id && p.manual && f.sort !== p.sort && p.builtin_type !== 'queue'
+      && !confirm('Changing the order clears the order you made by hand. Continue?')) return;
+    say('Saving...');
+    try {
+      let pid = id;
+      if (id) await send('PATCH', '/api/playlists/' + id, f); else pid = (await post('/api/playlists', f)).id;
+      if (smart) await send('PUT', `/api/playlists/${pid}/shows`, {shows: [...high.map(h => ({show_id: h, priority: 'high'})),
+        ...Object.keys(pri).filter(k => pri[k] !== 'high').map(k => ({show_id: +k, priority: pri[k]}))]});
+      $('#psdlg').close(); showPlaylist(pid);
+    } catch (e) { say(readErr(e), true); } };
+  say(''); $('#psdlg').showModal();
 }
 
 async function showShows(showId) {
@@ -195,14 +352,22 @@ async function showShows(showId) {
       <label>Fallback outro <input id="outrosec" type="number" min="0" max="600" value="${show.outro_skip || 0}"> sec</label>
       <button class="g" id="saveskip">Save</button></div>
       <div class="bar skipbar"><label>Playlists: only from the last <input id="limdays" type="number" min="0" max="3650" value="${show.newer_than_days || 0}"> days</label>
-      <label>Keep last <input id="limkeep" type="number" min="0" max="1000" value="${show.keep_last || 0}"> episodes</label>
+      <label>Keep <input id="limkeep" type="number" min="0" max="1000" placeholder="${show.keep_default}" value="${show.keep_last ?? ''}"> unplayed episodes downloaded</label>
       <button class="g" id="savelim">Save</button></div>
-      <div class="msg" style="min-height:0">These two apply to this show in every smart playlist. 0 means no limit. Nothing is deleted.</div>
-      <div class="msg" id="rmsg"></div><div class="msg" id="lmsg" style="min-height:0"></div>
+      <div class="msg" style="min-height:0">Days: 0 means no limit. Keep: empty means the default (${show.keep_default}), 0 means no automatic downloads. The file of a played episode is deleted some hours after you finish it, unless the episode is starred.</div>
+      <div class="bar skipbar" id="shpl"></div>
+      <div class="bar"><button class="g" id="subbtn">${show.subscribed ? 'Unsubscribe' : 'Subscribe again'}</button></div>
+      <div class="msg" id="rmsg">${show.subscribed ? '' : 'Not subscribed. The history is kept, but there are no new episodes, no downloads, and the show is not in any playlist.'}</div><div class="msg" id="lmsg" style="min-height:0"></div>
       <div id="rep" data-show="${+showId}"></div>`;
-    html += eps.map((e, i) => epRow(e, i)).join('');
+    html += eps.map((e, i) => epRow(e, i, {})).join('');
     $('#main').innerHTML = html;
     $('#bk').onclick = () => showShows();
+    $('#subbtn').onclick = async () => { await post(`/api/shows/${showId}/${show.subscribed ? 'unsubscribe' : 'subscribe'}`); showShows(showId); };
+    api(`/api/shows/${showId}/playlists`).then(pls => { const box = $('#shpl'); if (!box || !pls.length) return;
+      box.innerHTML = '<label>In playlists:</label>' + pls.map(p => `<label><input type="checkbox" data-plm="${p.id}" style="width:auto" ${p.member || p.all_shows ? 'checked' : ''} ${p.all_shows ? 'disabled' : ''}> ${esc(p.title)}${p.all_shows ? ' (all shows)' : ''}</label>`).join('');
+      box.onchange = async ev => { const c = ev.target; if (!c.dataset.plm) return;
+        try { await post(`/api/shows/${showId}/playlists/${c.dataset.plm}`, {on: c.checked}); sayIn('#rmsg')(c.checked ? 'Added to that playlist.' : 'Taken out of that playlist.'); }
+        catch (e) { sayIn('#rmsg')(readErr(e), true); } }; }).catch(() => {});
     $('#setio').onclick = () => openIoDialog(showId, eps, () => showShows(showId));
     $('#redetect').onclick = async () => { const r = await post(`/api/shows/${showId}/redetect`);
       $('#rmsg').textContent = 'Re-checking intro and outro for ' + r.queued + ' downloaded episodes in the background. This uses the CPU only.'; };
@@ -214,20 +379,19 @@ async function showShows(showId) {
       eps.forEach(x => { x.intro_skip = r.intro_skip; x.outro_skip = r.outro_skip; }); drawBands();
       $('#rmsg').textContent = 'Saved. Intro ' + r.intro_skip + 's, outro ' + r.outro_skip + 's.'; };
     $('#savelim').onclick = async () => {
-      const r = await post(`/api/shows/${showId}/limits`, {newer_than_days: +$('#limdays').value || 0, keep_last: +$('#limkeep').value || 0});
-      $('#rmsg').textContent = 'Saved. Playlists take ' + (r.keep_last ? 'the newest ' + r.keep_last + ' downloaded episodes' : 'all downloaded episodes')
-        + ' of this show' + (r.newer_than_days ? ', and only from the last ' + r.newer_than_days + ' days.' : '.'); };
+      const keep = $('#limkeep').value.trim();
+      const r = await post(`/api/shows/${showId}/limits`, {newer_than_days: +$('#limdays').value || 0, keep_last: keep === '' ? null : +keep});
+      const n = r.keep_last ?? show.keep_default;
+      $('#rmsg').textContent = 'Saved. ' + (n ? 'The newest ' + n + ' unplayed episodes are kept downloaded' : 'Nothing is downloaded automatically')
+        + (r.newer_than_days ? ', and playlists only take episodes from the last ' + r.newer_than_days + ' days.' : '.')
+        + (r.queued ? ' ' + r.queued + ' episodes were added to the download queue.' : ''); };
     loadRepeats(showId);
     $('#rescan').onclick = async () => { let found = 0, queued = 0;
       for (const e of eps.filter(x => x.playable && x.status !== 'downloaded' && x.status !== 'scanning')) {
         const r = await post(`/api/episodes/${e.id}/rescan`); if (r.mode === 'new scan queued') queued++; else found += r.ads; }
       await showShows(showId);
       $('#rmsg').textContent = queued ? queued + ' episodes queued for a new scan. Watch the Queue tab.' : 'Re-checked with saved transcripts. ' + found + ' ads found in total.'; };
-    document.querySelectorAll('.row').forEach(r => r.onclick = async () => {
-      const e = eps[+r.dataset.i];
-      if (!e.playable) { if (['queued','downloading'].includes(e.status)) { alert('Already in the download queue. Check the Queue tab.'); return; }
-        await post(`/api/episodes/${e.id}/download`); alert('Added to the download queue. Watch it on the Queue tab.'); showShows(showId); return; }
-      queue = eps; play(+r.dataset.i); });
+    wireRows(eps, {ctx: {type: 'show', id: +showId}, pl: null, reload: () => showShows(showId), say: sayIn('#rmsg')});
     return;
   }
   const shows = await api('/api/shows');
@@ -236,7 +400,7 @@ async function showShows(showId) {
     <div class="msg" id="smsg"></div>`;
   if (!shows.length) html += `<div class="empty">No shows yet. Paste a link above or import an OPML file.</div>`;
   html += shows.map(s => `<div class="row" data-s="${s.id}">${s.image ? `<img src="${esc(s.image)}" alt="">` : '<div class="ph"></div>'}
-    <div style="flex:1;min-width:0"><div class="t">${esc(s.title || s.feed_url)}</div></div>
+    <div style="flex:1;min-width:0"><div class="t">${esc(s.title || s.feed_url)}</div>${s.subscribed ? '' : '<div class="s">Not subscribed</div>'}</div>
     <button class="g" data-delshow="${s.id}" data-name="${esc(s.title || s.feed_url)}">Delete</button></div>`).join('');
   $('#main').innerHTML = html;
   const say = (m, bad) => { const el = $('#smsg'); el.textContent = m; el.className = 'msg' + (bad ? ' bad' : ''); };
@@ -249,7 +413,7 @@ async function showShows(showId) {
   $('#opmlbtn').onclick = () => $('#opml').click();
   $('#opml').onchange = async ev => { const f = ev.target.files[0]; if (!f) return; say('Importing...');
     try { const r = await api('/api/import/opml', {method: 'POST', headers: {'Content-Type': 'text/xml'}, body: await f.text()});
-      await showShows(); $('#smsg').textContent = 'Imported ' + r.added + ' new shows (' + r.skipped + ' already added). The newest episode of each is queued.'; }
+      await showShows(); $('#smsg').textContent = 'Imported ' + r.added + ' new shows (' + r.skipped + ' already added). The newest episodes of each are downloaded.'; }
     catch (e) { say(readErr(e), true); } };
   document.querySelectorAll('[data-delshow]').forEach(b => b.onclick = async ev => { ev.stopPropagation();
     if (!confirm('Delete "' + b.dataset.name + '" and its downloaded audio?')) return;
@@ -305,20 +469,6 @@ async function loadRepeats(showId) {
   if (r.state === 'waiting' || r.state === 'running') repTimer = setTimeout(() => loadRepeats(showId), 5000);
 }
 
-async function openDialog() {
-  const shows = await api('/api/shows');
-  $('#ps').innerHTML = shows.map(s => `<option value="${s.id}">${esc(s.title || s.feed_url)}</option>`).join('');
-  $('#dlg').showModal();
-}
-$('#plform').addEventListener('submit', async ev => {
-  if (ev.submitter && ev.submitter.value === 'cancel') return;
-  const rules = { show_ids: [...$('#ps').selectedOptions].map(o => +o.value), unplayed_only: $('#pu').checked, sort: $('#po').value };
-  if ($('#pm').value) rules.max_minutes = +$('#pm').value;
-  await post('/api/playlists', {name: $('#pn').value, rules});
-  render();
-});
-
-const readErr = e => { try { return JSON.parse(e.message).detail || e.message; } catch (_) { return e.message; } };
 const mb = b => (b / 1048576).toFixed(b > 10485760 ? 0 : 1) + ' MB';
 
 function drawQueue(q) {
@@ -344,7 +494,7 @@ async function pollQueue() {
   try {
     const q = await api('/api/queue');
     const busy = q.filter(x => x.status !== 'error' && x.status !== 'scan_error').length;
-    document.querySelector('[data-t="qu"]').textContent = busy ? 'Queue (' + busy + ')' : 'Queue';
+    document.querySelector('[data-t="qu"]').textContent = busy ? 'Downloads (' + busy + ')' : 'Downloads';
     if (tab === 'qu') drawQueue(q);
   } catch (e) { /* server restarting, try again next tick */ }
 }
@@ -420,6 +570,7 @@ async function play(i) {
     if (start > 0) au.currentTime = start;
   };
   au.play();
+  prepNext();
   $('#now').textContent = e.title; $('#sub').textContent = e.show_title;
   if ('mediaSession' in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({title: e.title, artist: e.show_title, artwork: e.show_image ? [{src: e.show_image}] : []});
@@ -427,13 +578,26 @@ async function play(i) {
     navigator.mediaSession.setActionHandler('pause', () => au.pause());
     navigator.mediaSession.setActionHandler('seekbackward', () => au.currentTime -= 15);
     navigator.mediaSession.setActionHandler('seekforward', () => au.currentTime += 30);
-    navigator.mediaSession.setActionHandler('nexttrack', () => play(qi + 1));
+    navigator.mediaSession.setActionHandler('nexttrack', () => advance(false));
   }
+}
+// The player holds one episode. What follows it is asked from the server, which knows the playlist order.
+function playEp(e, from) { ctx = from || null; queue = [e]; play(0); }
+const nextUrl = e => ctx && e ? `/api/${ctx.type === 'show' ? 'shows' : 'playlists'}/${ctx.id}/next?after=${e.id}` : null;
+// Asking early makes the server download the next episode while this one plays.
+function prepNext() { const u = nextUrl(queue[qi]); if (u) api(u).catch(() => {}); }
+async function advance(ended) {
+  const u = nextUrl(queue[qi]); if (!u) return;
+  let r; try { r = await api(u); } catch (_) { return; }
+  if (ended && !r.continuous) return;
+  if (!r.next) { if (r.pending) toast('Next up is still downloading: ' + r.pending.title); return; }
+  queue = [r.next]; await play(0);
+  if (r.pending) toast('"' + r.pending.title + '" is still downloading. Playing the one after it.');
 }
 function save(done) {
   const e = queue[qi]; if (!e || !isFinite(au.currentTime)) return;
   e.position = au.currentTime; if (done) e.played = 1;
-  post(`/api/episodes/${e.id}/progress`, {position: au.currentTime, played: !!done}).catch(() => {});
+  return post(`/api/episodes/${e.id}/progress`, {position: au.currentTime, played: !!done}).catch(() => {});
 }
 let toastT;
 function toast(msg) { $('#sub').textContent = msg; clearTimeout(toastT);
@@ -456,7 +620,7 @@ au.ontimeupdate = () => {
 };
 au.onplay = () => $('#play').innerHTML = '&#10074;&#10074;';
 au.onpause = () => { $('#play').innerHTML = '&#9654;'; save(false); };
-au.onended = () => { save(true); if (qi + 1 < queue.length) play(qi + 1); };
+au.onended = async () => { await save(true); await advance(true); if (tab === 'pl' && curPl) showPlaylist(curPl.id); };
 $('#play').onclick = () => au.paused ? au.play() : au.pause();
 $('#back').onclick = () => au.currentTime -= 15;
 $('#fwd').onclick = () => au.currentTime += 30;

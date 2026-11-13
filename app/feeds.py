@@ -9,7 +9,8 @@ import db
 import sources
 from progress import PROGRESS
 
-AUTO_DOWNLOAD_LATEST = int(os.environ.get("AUTO_DOWNLOAD_LATEST", "3"))
+# How many unplayed episodes of each show are kept downloaded when the show has no number of its own.
+AUTO_DOWNLOAD_LATEST = int(os.environ.get("AUTO_DOWNLOAD_LATEST", "5"))
 
 
 def parse_duration(raw):
@@ -116,8 +117,7 @@ def import_opml_text(text):
     conn = db.connect()
     added = 0
     for feed_url, title in entries:
-        # Imports queue only the newest episode per show so a big OPML file does not flood the GPU.
-        _show_id, created = insert_show(conn, feed_url, title, auto_latest=1)
+        _show_id, created = insert_show(conn, feed_url, title)
         added += 1 if created else 0
     conn.close()
     return {"total": len(entries), "added": added, "skipped": len(entries) - added}
@@ -125,7 +125,7 @@ def import_opml_text(text):
 
 def refresh_all():
     conn = db.connect()
-    shows = conn.execute("SELECT id, feed_url FROM shows").fetchall()
+    shows = conn.execute("SELECT id, feed_url FROM shows WHERE COALESCE(subscribed, 1) = 1").fetchall()
     for i, show in enumerate(shows, 1):
         try:
             print(f"    ({i}/{len(shows)}) {show['feed_url']}")
@@ -136,13 +136,15 @@ def refresh_all():
 
 
 def queue_latest(conn):
+    """Keep N downloaded: queue the newest N unplayed episodes of every subscribed show."""
     queued = 0
-    for show in conn.execute("SELECT id, auto_latest FROM shows").fetchall():
-        limit = AUTO_DOWNLOAD_LATEST if show["auto_latest"] is None else show["auto_latest"]
+    for show in conn.execute("SELECT id, keep_last FROM shows WHERE COALESCE(subscribed, 1) = 1").fetchall():
+        limit = AUTO_DOWNLOAD_LATEST if show["keep_last"] is None else show["keep_last"]
         if limit <= 0:
             continue
         rows = conn.execute(
-            "SELECT id, status FROM episodes WHERE show_id = ? ORDER BY published DESC LIMIT ?",
+            "SELECT id, status FROM episodes WHERE show_id = ? AND played = 0 AND removed = 0 "
+            "ORDER BY published DESC, id DESC LIMIT ?",
             (show["id"], limit),
         ).fetchall()
         for r in rows:

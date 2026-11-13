@@ -2,7 +2,7 @@
 
 A self-hosted podcast app for myself. It pulls in shows from almost any link, downloads the latest episodes, transcribes them on the GPU, and automatically skips the ads while you listen.
 
-**Current version: v0.0.15** (shown in the bottom right of the player bar on every screen)
+**Current version: v0.0.16** (shown in the bottom right of the player bar on every screen)
 
 ## Features
 
@@ -19,9 +19,11 @@ A self-hosted podcast app for myself. It pulls in shows from almost any link, do
 
 ### Episodes and downloads
 - Feeds refresh automatically (every `REFRESH_MINUTES`, default 30) or on demand with **Check for episodes**.
-- The newest `AUTO_DOWNLOAD_LATEST` episodes of each show (default 3) are downloaded automatically.
-- Older episodes can be downloaded manually by tapping them on a show page.
-- A **Queue** tab shows every episode that is downloading, waiting, scanning, or failed, with live progress bars, download sizes, error messages, and a **Retry** button. The tab title shows a count of active items.
+- **Keep N downloaded**: the newest N unplayed episodes of each subscribed show are downloaded automatically. N is set per show on the show page. Empty means the default (`AUTO_DOWNLOAD_LATEST`, default 5). 0 means none.
+- Any other episode can be downloaded by hand with its **Download** button. An episode that is next up in the player is downloaded automatically, ahead of everything else.
+- **Cleanup**: the audio file of a finished episode is deleted `CLEANUP_HOURS` (default 12) after it was finished. Starred episodes keep their file. Unplayed episodes are never deleted. The episode stays in the list and can be downloaded again. Transcripts, ad tags, and learned ads are kept.
+- A show can be **unsubscribed** on its page. It stops refreshing and downloading, its episodes leave the playlists, and its history stays. **Subscribe again** brings it back.
+- A **Downloads** tab shows every episode that is downloading, waiting, scanning, or failed, with live progress bars, download sizes, error messages, and a **Retry** button. The tab title shows a count of active items.
 - Anything that was in progress when the container stopped is put back in the queue on restart.
 
 ### Ad skipping
@@ -77,17 +79,24 @@ The app compares the newest downloaded episodes of each show and looks for secti
 - Limits: it matches the same recording, not the same words. A host reading the same ad copy live each week is not found this way. Tag those by hand so the phrases are learned.
 
 ### Smart playlists
-- Create playlists from rules:
-  - Which shows to include (none selected means all)
-  - Maximum length in minutes
-  - Newest first or oldest first
-  - Unplayed only
-- Two limits are set per show, on the show page, and apply to that show in every playlist:
-  - **Only from the last N days**
-  - **Keep last N episodes**: only the newest N downloaded episodes of the show. Played episodes count toward N, so a daily show set to 1 only ever offers its latest episode.
-  - 0 means no limit. These only decide what playlists show. No files are deleted.
-- Playlists update automatically as new episodes arrive and are limited to 50 episodes.
-- Playing a playlist continues through it episode by episode.
+- The Playlists tab shows every playlist as a button with its icon, colour, and count of unplayed episodes. An empty playlist is grey.
+- A smart playlist is a set of rules, not a stored list. It always shows every unplayed episode of its shows, downloaded or not. Episodes that are not on disk are grey and have a **Download** button.
+- Playlist settings:
+  - Title, icon, and colour
+  - Shows: all shows, or a picked list. Each picked show is **High**, **Normal**, or **Low** priority. High shows always come first and Low shows last.
+  - Order: oldest first, newest first, or grouped by show (oldest or newest)
+  - Priority shows: keep each High show together in the order you ranked them, or mix the High shows by date
+  - **Play the top episode next**: when an episode ends, play whatever is at the top of the playlist, so a new High episode jumps the line
+  - **Continuous play**: keep going when an episode ends
+- Single episodes can be added to a playlist or hidden from it (the ⋯ button on an episode). Both are listed in the playlist settings with an Undo button.
+- Episodes can be reordered by dragging, or with the ↑ and ↓ buttons. Your order stays on top, and new episodes land after it. **Clear my order** goes back to the rule order. Changing the order rule clears it too.
+- Three built-in playlists:
+  - **Up Next**: your own queue. **Play Next** and **Play Last** on any episode add to it.
+  - **Starred**: episodes you starred. Starring also protects the file from cleanup.
+  - **Downloaded**: everything on disk.
+- Per show, **Only from the last N days** (on the show page) still limits what that show puts in playlists.
+- When an episode ends, the server works out the next one. If it is not downloaded yet, the player moves on to the next downloaded episode and says so.
+- An episode can be **removed from all playlists** without marking it played. It can be put back from the show page.
 
 ### Player
 - Fixed player bar on every screen with seek bar, elapsed time, and time remaining (adjusted for playback speed).
@@ -97,6 +106,15 @@ The app compares the newest downloaded episodes of each show and looks for secti
 - Progress is saved every few seconds, so episodes resume where you left off. Finished episodes are marked as played and greyed out.
 - Media Session support: lock screen and headphone controls for play, pause, seek, and next track, plus episode artwork.
 - Layout follows your system light or dark theme and is safe-area aware for phones.
+
+## Changes in v0.0.16
+- Playlists were rebuilt as smart playlists: show priorities (High, Normal, Low), four orders, manual reordering, per-episode add and hide, icons and colours, continuous play, and "play the top episode next". Existing playlists are converted. Their minutes and count limits are dropped.
+- New built-in playlists: **Up Next** (with Play Next and Play Last on every episode), **Starred**, and **Downloaded**.
+- Playlists now list every unplayed episode, not only downloaded ones. The next episode is downloaded automatically when it is next up.
+- Per show **Keep N downloaded** replaces "Keep last N episodes". The default is 5 (`AUTO_DOWNLOAD_LATEST`). It no longer hides episodes from playlists.
+- Played files are deleted 12 hours after the episode was finished (`CLEANUP_HOURS`, 0 turns it off). Starred episodes are kept. Files of episodes played before this version are deleted on the first pass.
+- Episodes can be starred, and removed from all playlists. Shows can be unsubscribed without losing their history.
+- The Queue tab is now called **Downloads**, so it is not confused with Up Next.
 
 ## Changes in v0.0.15
 - New **Repeated audio** list on each show page. The app compares the newest downloaded episodes of a show and flags sections found in more than one, to confirm as intro, outro, or ad.
@@ -149,7 +167,8 @@ services:
       WHISPER_DEVICE: "cuda"
       WHISPER_COMPUTE: "int8"
       REFRESH_MINUTES: "30"
-      AUTO_DOWNLOAD_LATEST: "3"
+      AUTO_DOWNLOAD_LATEST: "5"
+      CLEANUP_HOURS: "12"
 ```
 
 ### Settings
@@ -159,7 +178,8 @@ services:
 | `WHISPER_DEVICE` | `cuda` | `cuda` or `cpu` |
 | `WHISPER_COMPUTE` | `int8` | Whisper compute type |
 | `REFRESH_MINUTES` | `30` | How often feeds are checked |
-| `AUTO_DOWNLOAD_LATEST` | `3` | Newest episodes per show to download automatically |
+| `AUTO_DOWNLOAD_LATEST` | `5` | Default for **Keep N downloaded**: newest unplayed episodes per show kept on disk |
+| `CLEANUP_HOURS` | `12` | Hours after an episode is finished before its file is deleted. `0` turns cleanup off |
 | `SKIP_CONFIDENCE` | `0.6` | How sure the intro/outro theme match must be (0 to 1) before it is used |
 | `AD_AUDIO_CONFIDENCE` | `0.5` | How sure a match to a tagged ad's audio must be (0 to 1) |
 | `INTRO_WINDOW_SECONDS` | `240` | How much of the start of an episode is searched for the intro |

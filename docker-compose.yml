@@ -20,7 +20,8 @@ services:
       WHISPER_DEVICE: "cuda"
       WHISPER_COMPUTE: "int8"
       REFRESH_MINUTES: "30"
-      AUTO_DOWNLOAD_LATEST: "3"
+      AUTO_DOWNLOAD_LATEST: "5"
+      CLEANUP_HOURS: "12"
     labels:
       net.unraid.docker.managed: "dockerman"
       net.unraid.docker.webui: "http://[IP]:[PORT:8099]/"

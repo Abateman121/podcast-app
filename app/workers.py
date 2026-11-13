@@ -9,17 +9,21 @@ import db
 import feeds
 import markers
 import repeats
-from progress import ERRORS, PROGRESS
+from progress import ERRORS, PLAYING, PROGRESS
 
 REFRESH_MINUTES = int(os.environ.get("REFRESH_MINUTES", "30"))
+CLEANUP_HOURS = float(os.environ.get("CLEANUP_HOURS", "12"))   # played files are deleted after this long. 0 = never
+PLAYING_GRACE = 3600   # seconds an episode counts as "in the player" after the page last touched it
 wake = threading.Event()
 
 
 def next_episode(status):
     conn = db.connect()
     row = conn.execute(
-        "SELECT id, show_id, file_path FROM episodes WHERE status = ? ORDER BY published DESC LIMIT 1", (status,)
-    ).fetchone()
+        "SELECT id, show_id, file_path FROM episodes WHERE status = ? "
+        "ORDER BY dl_priority DESC, published DESC LIMIT 1",
+        (status,),
+    ).fetchone()   # dl_priority: the episode that is next up in the player goes first
     conn.close()
     return row
 
@@ -91,7 +95,7 @@ def scan_loop():
                 json.dump(segments, fh)
             conn = db.connect()
             conn.execute(
-                "UPDATE episodes SET ads_json = ?, status = 'ready' WHERE id = ?",
+                "UPDATE episodes SET ads_json = ?, status = 'ready', dl_priority = 0 WHERE id = ? AND status = 'scanning'",
                 (json.dumps(ranges), episode_id),
             )
             conn.commit()
@@ -213,6 +217,56 @@ def repeat_loop():
             time.sleep(30)
 
 
+def cleanup_played(conn, now=None):
+    """Delete the audio of episodes that were finished (or removed) more than CLEANUP_HOURS ago.
+
+    Starred episodes and unplayed episodes are never touched. The row, the transcript, the tags and
+    the learned ad samples stay, so the episode can be downloaded again. Returns the ids cleaned up.
+    """
+    if CLEANUP_HOURS <= 0:
+        return []
+    now = now or time.time()
+    rows = conn.execute(
+        "SELECT id, file_path FROM episodes WHERE (played = 1 OR removed = 1) AND starred = 0 "
+        "AND file_path IS NOT NULL AND status IN ('downloaded', 'ready', 'scan_error') AND COALESCE(played_at, 0) <= ?",
+        (int(now - CLEANUP_HOURS * 3600),),
+    ).fetchall()
+    cleaned = []
+    for row in rows:
+        if now - PLAYING.get(row["id"], 0) < PLAYING_GRACE:
+            continue   # loaded in the player right now
+        cur = conn.execute(
+            "UPDATE episodes SET status = 'new', file_path = NULL, dl_priority = 0 WHERE id = ? "
+            "AND (played = 1 OR removed = 1) AND starred = 0 AND status IN ('downloaded', 'ready', 'scan_error')",
+            (row["id"],),
+        )
+        conn.commit()
+        if not cur.rowcount:
+            continue
+        try:
+            if os.path.exists(row["file_path"]):
+                os.remove(row["file_path"])
+            print(f"[cleanup] episode {row['id']}: deleted {row['file_path']}")
+        except OSError as exc:
+            print(f"[cleanup] episode {row['id']}: could not delete {row['file_path']}: {exc}")
+        cleaned.append(row["id"])
+    return cleaned
+
+
+def cleanup_loop():
+    time.sleep(60)
+    while True:
+        try:
+            conn = db.connect()
+            try:
+                cleanup_played(conn)
+            finally:
+                conn.close()
+        except Exception as exc:
+            print(f"[cleanup] loop error: {exc}")
+        time.sleep(300)
+
+
 def start():
-    for target in (refresh_loop, download_loop, scan_loop, marker_loop, ad_audio_loop, repeat_loop):
+    for target in (refresh_loop, download_loop, scan_loop, marker_loop, ad_audio_loop, repeat_loop, cleanup_loop):
         threading.Thread(target=target, daemon=True).start()
