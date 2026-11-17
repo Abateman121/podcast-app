@@ -109,14 +109,31 @@ The app compares the newest downloaded episodes of each show and looks for secti
 - The import downloads nothing by itself. Afterwards the normal Keep N downloaded rule applies.
 - Details are in [docs/overcast-import.md](docs/overcast-import.md).
 
+### Shorten Silence
+- Speeds through the pauses in speech. No speech is cut and no pause is removed: the first and last 80 ms of every pause play normally, and the middle plays at 3x your speed (never above 4.0x). Every pause still lasts at least 180 ms.
+- Each downloaded, unplayed episode is checked once for pauses (quieter than -35 dB for at least 250 ms). This is a short ffmpeg pass on the CPU, separate from the ad scan. Music and steady sound are left alone. A new download of the same episode is checked again.
+- Turn it on with the **Silence** button in the player, or with **Shorten Silence by default** on the Shows tab. Each show can override the default on its show page: Default, On, or Off. The player button changes the show setting when the show has one, otherwise the default. A change takes effect at once.
+- While it is on, the button shows the effective speed, and the time remaining is in real time. Positions, ads, and intro/outro markers stay in episode time.
+- Pauses inside a skipped ad, intro, or outro are ignored. The skip comes first.
+- Until an episode has been checked, the button reads "Silence: on (not ready)" and the episode plays normally.
+- The Shows tab shows the time saved in total, split into speed, shortened silence, and skipped ads.
+- The page sets the speed from a timer. When the browser slows that timer down (for example a hidden tab, or a phone with the screen locked), playback stays at your normal speed until the timer runs smoothly again. That way a late timer can never leave speech sped up.
+
 ### Player
-- Fixed player bar on every screen with seek bar, elapsed time, and time remaining (adjusted for playback speed).
+- Fixed player bar on every screen with seek bar, elapsed time, and time remaining (adjusted for playback speed and shortened silence).
 - A coloured strip above the seek bar shows what was detected in the episode: red for ads, blue for the intro and outro. It updates while an episode is still being scanned and when you tag an ad.
 - Back 15 seconds and forward 30 seconds buttons.
 - **Playback speed from 0.5x to 3.0x in 0.05x steps.** Use the `−` and `+` buttons around the speed label. Tap the speed label to reset to 1.0x. The chosen speed carries over to the next episode.
 - Progress is saved every few seconds, so episodes resume where you left off. Finished episodes are marked as played and greyed out.
 - Media Session support: lock screen and headphone controls for play, pause, seek, and next track, plus episode artwork.
 - Layout follows your system light or dark theme and is safe-area aware for phones.
+
+## Changes in v0.0.18
+- New **Shorten Silence**: pauses in speech play faster, with a global default (off at first) and a per-show override.
+- A new background worker checks each downloaded, unplayed episode for pauses. Episodes already on disk are checked after the update, newest first.
+- Time remaining is shown in real time, and the player shows the effective speed.
+- Time saved is recorded per episode and per show, and the total is shown on the Shows tab, split into speed, silence, and skipped ads.
+- New routes: `POST /api/episodes/{id}/analyze`, `GET /api/episodes/{id}/silence`, `GET` and `POST /api/stats/time-saved`, `GET` and `POST /api/settings/silence`, `POST /api/shows/{id}/silence`. Maps are stored in `/data/silence`.
 
 ## Changes in v0.0.17
 - New **Import from Overcast** on the Shows tab: shows, play history, positions, and playlists from an Overcast "All data" export.
@@ -210,7 +227,8 @@ services:
 The `/data` volume holds the SQLite database, downloaded audio, saved transcripts, and the audio snippets behind intro/outro templates and tagged ads (`/data/templates`). The snippets let the fingerprints be rebuilt if the matching method changes.
 
 ## How it is built
-- **Backend:** Python, FastAPI, SQLite (`app/main.py`, `feeds.py`, `sources.py`, `workers.py`, `adscan.py`, `db.py`, plus `fingerprint.py`, `markers.py`, `adlearn.py`, and `repeats.py` for intro/outro detection, learning from tagged ads, and finding repeated audio)
+- **Backend:** Python, FastAPI, SQLite (`app/main.py`, `feeds.py`, `sources.py`, `workers.py`, `adscan.py`, `db.py`, plus `fingerprint.py`, `markers.py`, `adlearn.py`, and `repeats.py` for intro/outro detection, learning from tagged ads, and finding repeated audio, `playlists.py`, `overcast.py`, and `silence.py` for Shorten Silence)
 - **Frontend:** a single static page, `app/static/index.html`, with no build step
-- **Workers:** six background threads for feed refresh, downloading, ad scanning, intro/outro detection, matching tagged ads, and finding repeated audio. The last three use the CPU only.
+- **Workers:** eight background threads for feed refresh, downloading, ad scanning, intro/outro detection, matching tagged ads, finding pauses, finding repeated audio, and cleanup of played files. Only the ad scan uses the GPU.
+- **Tests:** `tests/check_silence.py` (server, inside the container) and `tests/silence_rules.test.js` (player rate schedule, in node). The commands are at the top of each file.
 - **Image:** Nvidia CUDA runtime base with ffmpeg, built and published by GitHub Actions

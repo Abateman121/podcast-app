@@ -219,8 +219,8 @@ def download_episode(conn, episode_id):
         path = os.path.join(db.AUDIO_DIR, f"{episode_id}{ext}")
         download_http(episode_id, ep["audio_url"], path)
     conn.execute(
-        "UPDATE episodes SET file_path = ?, status = 'downloaded', duration = CASE WHEN ? > 0 THEN ? ELSE duration END "
-        "WHERE id = ?",
+        "UPDATE episodes SET file_path = ?, status = 'downloaded', silence_ver = 0, "
+        "duration = CASE WHEN ? > 0 THEN ? ELSE duration END WHERE id = ?",
         (path, duration, duration, episode_id),
     )
     conn.commit()
