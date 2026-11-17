@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#14171c">
 <title>Podcasts</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
+<link rel="icon" type="image/png" sizes="256x256" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-title" content="Podcasts">
 <style>
 :root{--bg:#eef0f2;--card:#fff;--ink:#15181c;--mute:#667080;--line:#d9dde2;--acc:#e8700c;--accink:#fff;--ad:#d43f3f;--io:#2f7fe0}
 @media(prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1c2027;--ink:#e9ecef;--mute:#8b94a1;--line:#2a2f38;--acc:#ff8a2b;--accink:#14171c;--ad:#ff5c5c;--io:#5aa2ff}}
@@ -84,7 +89,7 @@ dialog.wide{width:min(560px,94vw)}
 </head>
 <body>
 <header><nav id="tabs">
-  <button data-t="pl" class="on">Playlists</button><button data-t="sh">Shows</button><button data-t="qu">Downloads</button>
+  <img src="/icon-180.png" alt="" width="32" height="32" style="align-self:center;margin-right:6px;border-radius:7px"><button data-t="pl" class="on">Playlists</button><button data-t="sh">Shows</button><button data-t="qu">Downloads</button>
 </nav></header>
 <main id="main"></main>
 
@@ -127,6 +132,8 @@ dialog.wide{width:min(560px,94vw)}
 <dialog id="addlg" class="wide"><form method="dialog">
   <h3 style="margin:0 0 4px">Tag an ad</h3>
   <div class="msg" id="adinfo"></div>
+  <input id="adseek" type="range" min="0" max="1000" value="0" style="width:100%" aria-label="Position in the episode">
+  <div class="mrow" id="adtp"><button type="button" class="g" data-tp="-15">&minus;15s</button><button type="button" class="g" data-tp="-5">&minus;5s</button><button type="button" class="p" data-tp="toggle" id="adplay">Play</button><button type="button" class="g" data-tp="5">+5s</button><button type="button" class="g" data-tp="15">+15s</button></div>
   <div class="mrow"><span class="lab">Missed ad starts at (m:ss)</span>
     <input id="adstart" type="text" inputmode="decimal" placeholder="1:23">
     <button type="button" class="g" data-f="adstart" data-a="now">Now</button><button type="button" class="g" data-f="adstart" data-a="-5">&minus;5s</button><button type="button" class="g" data-f="adstart" data-a="5">+5s</button><button type="button" class="g" data-f="adstart" data-a="play">Play</button></div>
@@ -158,7 +165,7 @@ dialog.wide{width:min(560px,94vw)}
     <button class="g" id="tagad" title="Tag a missed ad, or an ad that was skipped by mistake">Tag ad</button>
     <span class="tm" id="rem">0:00</span>
   </div>
-  <div id="foot"><div class="key" id="key" hidden><i class="ad"></i>Ad<i class="io"></i>Intro/outro</div><span></span><div id="ver">v0.0.18</div></div>
+  <div id="foot"><div class="key" id="key" hidden><i class="ad"></i>Ad<i class="io"></i>Intro/outro</div><span></span><div id="ver">v0.0.19</div></div>
 </div></div>
 <audio id="au" preload="auto"></audio>
 
@@ -890,11 +897,13 @@ async function openIoDialog(showId, eps, done) {
     <button type="button" class="g" data-k="${k}" data-a="now">Now</button>
     <button type="button" class="g" data-k="${k}" data-a="-0.1">&minus;0.1</button>
     <button type="button" class="g" data-k="${k}" data-a="0.1">+0.1</button>
-    <button type="button" class="g" data-k="${k}" data-a="play">${k.endsWith('_end') ? 'Play 3s before' : 'Play from here'}</button></div>`).join('');
+    <button type="button" class="g" data-k="${k}" data-a="play">${k.endsWith('_end') ? 'Play 3s before' : 'Play from here'}</button>${k.endsWith('_end')
+      ? `<button type="button" class="g" data-k="${k}" data-a="from">Play from here</button>` : ''}</div>`).join('');
   $('#iorows').onclick = ev => { const b = ev.target.closest('button'); if (!b) return;
     const f = $('#io_' + b.dataset.k), a = b.dataset.a;
     if (a === 'now') f.value = ioau.currentTime.toFixed(1);
     else if (a === 'play') { ioau.currentTime = Math.max(0, (+f.value || 0) - (b.dataset.k.endsWith('_end') ? 3 : 0)); ioau.play(); }
+    else if (a === 'from') { ioau.currentTime = Math.max(0, +f.value || 0); ioau.play(); }
     else f.value = Math.max(0, Math.round(((+f.value || 0) + (+a)) * 10) / 10).toFixed(1); };
   $('#iosave').onclick = async () => {
     const body = {episode_id: +$('#ioep').value};
@@ -941,10 +950,20 @@ function openTagDialog() {
   setTagEdit(null);
   $('#adstart').value = fmtT(Math.max(0, now - 30)); $('#adend').value = fmtT(now);
   tagSay('Filled in with the last 30 seconds. Adjust the times, then save.');
-  const clock = () => { $('#adinfo').textContent = e.title + ' (now at ' + fmtT(au.currentTime) + ')'; };
-  clock(); clearInterval(tagClock); tagClock = setInterval(clock, 500);
+  const clock = () => { $('#adinfo').textContent = e.title + ' (now at ' + fmtT(au.currentTime) + ')';
+    $('#adplay').textContent = au.paused ? 'Play' : 'Pause';
+    if (!tagSeeking && au.duration) $('#adseek').value = Math.round(au.currentTime / au.duration * 1000); };
+  clock(); clearInterval(tagClock); tagClock = setInterval(clock, 250);
   drawTags(); $('#addlg').showModal();
 }
+// Play, pause and seek inside the dialog, since the player behind it cannot be reached while it is open.
+let tagSeeking = false;
+$('#adseek').oninput = () => { tagSeeking = true; };
+$('#adseek').onchange = () => { if (au.duration) au.currentTime = $('#adseek').value / 1000 * au.duration; tagSeeking = false; };
+$('#adtp').onclick = ev => { const b = ev.target.closest('button'); if (!b || !queue[qi]) return;
+  if (b.dataset.tp === 'toggle') { if (au.paused) au.play(); else au.pause(); }
+  else au.currentTime = Math.max(0, Math.min(au.duration || Infinity, au.currentTime + (+b.dataset.tp)));
+  $('#adplay').textContent = au.paused ? 'Play' : 'Pause'; };
 $('#tagad').onclick = openTagDialog;
 $('#addlg').addEventListener('close', () => clearInterval(tagClock));
 $('#addlg').onclick = async ev => {

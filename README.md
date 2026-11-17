@@ -128,6 +128,12 @@ The app compares the newest downloaded episodes of each show and looks for secti
 - Media Session support: lock screen and headphone controls for play, pause, seek, and next track, plus episode artwork.
 - Layout follows your system light or dark theme and is safe-area aware for phones.
 
+## Changes in v0.0.19
+- **Set intro/outro**: the "Intro ends at" and "Outro ends at" rows now have a **Play from here** button next to **Play 3s before** (#4).
+- **Tag an ad**: the dialog now has its own play and pause button, a position slider, and back and forward buttons (15 and 5 seconds), so you can find the edges of an ad without closing it (#5).
+- New app icon in the browser tab, on the tab bar, on the iPhone home screen, and in a web app manifest (#6).
+- For the Unraid Docker tab, copy `app/static/icon.png` to `/mnt/user/icons/podcast-app.png`. The compose example below already points there.
+
 ## Changes in v0.0.18
 - New **Shorten Silence**: pauses in speech play faster, with a global default (off at first) and a per-show override.
 - A new background worker checks each downloaded, unplayed episode for pauses. Episodes already on disk are checked after the update, newest first.
@@ -203,7 +209,11 @@ services:
       REFRESH_MINUTES: "30"
       AUTO_DOWNLOAD_LATEST: "5"
       CLEANUP_HOURS: "12"
+    labels:
+      net.unraid.docker.icon: "/mnt/user/icons/podcast-app.png"
 ```
+
+The app icon is in the repo at `app/static/icon.png` (256 x 256). The running app also serves it at `http://<server>:8099/icon.png`.
 
 ### Settings
 | Variable | Default | What it does |
