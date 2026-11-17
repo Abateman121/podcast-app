@@ -54,6 +54,28 @@ CREATE TABLE IF NOT EXISTS playlists (
     name TEXT NOT NULL,
     rules_json TEXT NOT NULL
 );
+-- Shows a smart playlist takes episodes from. priority is high, normal or low. rank orders the high shows.
+CREATE TABLE IF NOT EXISTS playlist_shows (
+    playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+    show_id INTEGER NOT NULL REFERENCES shows(id) ON DELETE CASCADE,
+    priority TEXT NOT NULL DEFAULT 'normal',
+    rank INTEGER,
+    PRIMARY KEY (playlist_id, show_id)
+);
+-- Single episodes added to (include) or hidden from (exclude) a playlist by hand.
+CREATE TABLE IF NOT EXISTS playlist_overrides (
+    playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+    episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    PRIMARY KEY (playlist_id, episode_id)
+);
+-- Hand-made order. For the Up Next playlist these rows are also its contents.
+CREATE TABLE IF NOT EXISTS playlist_order (
+    playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+    episode_id INTEGER NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (playlist_id, episode_id)
+);
 -- Ads the user tagged by hand. kind 'ad' is a missed ad, 'not_ad' is a range that was skipped by mistake.
 -- fp holds the audio fingerprint of a missed ad, anchors_json the phrases learned from its transcript.
 CREATE TABLE IF NOT EXISTS ad_tags (
@@ -100,13 +122,36 @@ SHOW_COLUMNS = {
     "outro_template_len": "REAL",
     "repeat_sig": "TEXT",           # which episodes were last compared for repeated audio
     "newer_than_days": "INTEGER",   # playlists only take episodes this recent (0 or NULL = no limit)
-    "keep_last": "INTEGER",         # playlists only take the newest N downloaded episodes (0 or NULL = no limit)
+    "keep_last": "INTEGER",         # keep the newest N unplayed episodes downloaded (NULL = the default, 0 = none)
+    "subscribed": "INTEGER DEFAULT 1",   # 0 = history only: no refresh, no downloads, not in playlists
+    "overcast_id": "TEXT",          # set by the Overcast import, so a second import finds the same show
 }
 EPISODE_COLUMNS = {
     "markers_json": "TEXT DEFAULT '{}'",
     "chapters_url": "TEXT",
     "ads_audio_json": "TEXT DEFAULT '[]'",
     "ads_audio_ver": "INTEGER DEFAULT 0",
+    "starred": "INTEGER DEFAULT 0",
+    "removed": "INTEGER DEFAULT 0",       # taken off the lists by the user
+    "played_at": "INTEGER DEFAULT 0",     # when it was finished, for the cleanup of played files
+    "dl_priority": "INTEGER DEFAULT 0",   # 1 = next up in the player, so download and scan it first
+    "overcast_id": "TEXT",                # set by the Overcast import
+}
+PLAYLIST_COLUMNS = {
+    "kind": "TEXT DEFAULT 'smart'",       # smart or builtin
+    "builtin_type": "TEXT",               # queue, starred or downloaded
+    "icon": "TEXT",
+    "color": "TEXT",
+    "position": "INTEGER DEFAULT 0",
+    "include_all_shows": "INTEGER DEFAULT 0",
+    "sort": "TEXT DEFAULT 'oldest'",
+    "priority_mode": "TEXT DEFAULT 'by_rank'",
+    "play_top_next": "INTEGER DEFAULT 0",
+    "continuous": "INTEGER DEFAULT 1",
+    "source": "TEXT",
+    "created": "INTEGER DEFAULT 0",
+    "updated": "INTEGER DEFAULT 0",
+    "converted": "INTEGER DEFAULT 0",     # 1 once the old rules_json has been turned into the columns above
 }
 
 
@@ -130,6 +175,13 @@ def meta_bump(conn, key):
     return meta_get(conn, key)
 
 
+def meta_set(conn, key, value):
+    """Store a number. The caller commits."""
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, int(value))
+    )
+
+
 def add_columns(conn, table, columns):
     existing = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
     for column, decl in columns.items():
@@ -146,6 +198,8 @@ def init():
     conn.executescript(SCHEMA)
     add_columns(conn, "shows", SHOW_COLUMNS)
     add_columns(conn, "episodes", EPISODE_COLUMNS)
+    add_columns(conn, "playlists", PLAYLIST_COLUMNS)
+    conn.execute("CREATE INDEX IF NOT EXISTS episodes_overcast ON episodes(overcast_id)")
     # Anything mid-flight when the container stopped goes back a step.
     conn.execute("UPDATE episodes SET status = 'queued' WHERE status = 'downloading'")
     conn.execute("UPDATE episodes SET status = 'downloaded' WHERE status = 'scanning'")

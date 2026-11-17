@@ -9,7 +9,8 @@ import db
 import sources
 from progress import PROGRESS
 
-AUTO_DOWNLOAD_LATEST = int(os.environ.get("AUTO_DOWNLOAD_LATEST", "3"))
+# How many unplayed episodes of each show are kept downloaded when the show has no number of its own.
+AUTO_DOWNLOAD_LATEST = int(os.environ.get("AUTO_DOWNLOAD_LATEST", "5"))
 
 
 def parse_duration(raw):
@@ -36,16 +37,10 @@ def is_youtube_url(url):
     return "youtube.com/watch" in (url or "") or "youtu.be/" in (url or "")
 
 
-def refresh_feed(conn, show_id, feed_url):
-    parsed = fetch_feed(feed_url)
-    title = parsed.feed.get("title")
-    image = (parsed.feed.get("image") or {}).get("href")
-    if title:
-        conn.execute(
-            "UPDATE shows SET title = ?, image = COALESCE(?, image) WHERE id = ?", (title, image, show_id)
-        )
+def feed_entries(parsed, feed_url):
+    """The episodes of a parsed feed as plain dicts. Nothing is saved."""
     youtube_feed = "youtube.com/feeds" in feed_url
-    added = 0
+    out = []
     for entry in parsed.entries:
         audio_url = None
         for link in entry.get("enclosures", []):
@@ -62,17 +57,40 @@ def refresh_feed(conn, show_id, feed_url):
         duration = parse_duration(entry.get("itunes_duration"))
         chapters = entry.get("podcast_chapters")
         chapters_url = chapters.get("url") if isinstance(chapters, dict) else None
+        out.append({
+            "guid": guid, "title": entry.get("title", "Untitled"), "published": published,
+            "duration": duration, "audio_url": audio_url, "chapters_url": chapters_url,
+        })
+    return out
+
+
+def store_entries(conn, show_id, entries):
+    """Insert feed episodes that are not in the database yet. Returns how many were new. The caller commits."""
+    added = 0
+    for e in entries:
         cur = conn.execute(
             "INSERT OR IGNORE INTO episodes (show_id, guid, title, published, duration, audio_url, chapters_url) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (show_id, guid, entry.get("title", "Untitled"), published, duration, audio_url, chapters_url),
+            (show_id, e["guid"], e["title"], e["published"], e["duration"], e["audio_url"], e["chapters_url"]),
         )
         added += cur.rowcount
-        if chapters_url and not cur.rowcount:
+        if e["chapters_url"] and not cur.rowcount:
             conn.execute(
                 "UPDATE episodes SET chapters_url = ? WHERE show_id = ? AND guid = ? AND chapters_url IS NULL",
-                (chapters_url, show_id, guid),
+                (e["chapters_url"], show_id, e["guid"]),
             )
+    return added
+
+
+def refresh_feed(conn, show_id, feed_url):
+    parsed = fetch_feed(feed_url)
+    title = parsed.feed.get("title")
+    image = (parsed.feed.get("image") or {}).get("href")
+    if title:
+        conn.execute(
+            "UPDATE shows SET title = ?, image = COALESCE(?, image) WHERE id = ?", (title, image, show_id)
+        )
+    added = store_entries(conn, show_id, feed_entries(parsed, feed_url))
     conn.commit()
     return added
 
@@ -116,8 +134,7 @@ def import_opml_text(text):
     conn = db.connect()
     added = 0
     for feed_url, title in entries:
-        # Imports queue only the newest episode per show so a big OPML file does not flood the GPU.
-        _show_id, created = insert_show(conn, feed_url, title, auto_latest=1)
+        _show_id, created = insert_show(conn, feed_url, title)
         added += 1 if created else 0
     conn.close()
     return {"total": len(entries), "added": added, "skipped": len(entries) - added}
@@ -125,7 +142,7 @@ def import_opml_text(text):
 
 def refresh_all():
     conn = db.connect()
-    shows = conn.execute("SELECT id, feed_url FROM shows").fetchall()
+    shows = conn.execute("SELECT id, feed_url FROM shows WHERE COALESCE(subscribed, 1) = 1").fetchall()
     for i, show in enumerate(shows, 1):
         try:
             print(f"    ({i}/{len(shows)}) {show['feed_url']}")
@@ -136,13 +153,15 @@ def refresh_all():
 
 
 def queue_latest(conn):
+    """Keep N downloaded: queue the newest N unplayed episodes of every subscribed show."""
     queued = 0
-    for show in conn.execute("SELECT id, auto_latest FROM shows").fetchall():
-        limit = AUTO_DOWNLOAD_LATEST if show["auto_latest"] is None else show["auto_latest"]
+    for show in conn.execute("SELECT id, keep_last FROM shows WHERE COALESCE(subscribed, 1) = 1").fetchall():
+        limit = AUTO_DOWNLOAD_LATEST if show["keep_last"] is None else show["keep_last"]
         if limit <= 0:
             continue
         rows = conn.execute(
-            "SELECT id, status FROM episodes WHERE show_id = ? ORDER BY published DESC LIMIT ?",
+            "SELECT id, status FROM episodes WHERE show_id = ? AND played = 0 AND removed = 0 "
+            "ORDER BY published DESC, id DESC LIMIT ?",
             (show["id"], limit),
         ).fetchall()
         for r in rows:
