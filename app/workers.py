@@ -9,6 +9,7 @@ import db
 import feeds
 import markers
 import repeats
+import silence
 from progress import ERRORS, PLAYING, PROGRESS
 
 REFRESH_MINUTES = int(os.environ.get("REFRESH_MINUTES", "30"))
@@ -201,6 +202,45 @@ def ad_audio_loop():
             time.sleep(3)
 
 
+def process_one_silence():
+    """Build the silence map of the newest unplayed downloaded episode that has none. CPU only.
+
+    Played episodes are skipped (spec 6.5). Returns False when there is nothing to do.
+    """
+    conn = db.connect()
+    try:
+        marks = ",".join("?" for _ in db.PLAYABLE)
+        row = conn.execute(
+            "SELECT id, file_path FROM episodes "
+            f"WHERE file_path IS NOT NULL AND status IN ({marks}) AND played = 0 AND COALESCE(silence_ver, 0) < ? "
+            "ORDER BY dl_priority DESC, published DESC LIMIT 1",
+            list(db.PLAYABLE) + [silence.ANALYZER_VERSION],
+        ).fetchone()
+        if row is None:
+            return False
+        try:
+            data = silence.analyze(conn, row["id"], row["file_path"])
+            print(f"[silence] episode {row['id']}: {len(data['intervals'])} pauses")
+        except Exception as exc:
+            print(f"[silence] episode {row['id']} failed: {exc}")
+            # Mark it done so a broken file is not retried forever. No map means normal playback.
+            conn.execute("UPDATE episodes SET silence_ver = ? WHERE id = ?", (silence.ANALYZER_VERSION, row["id"]))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def silence_loop():
+    while True:
+        try:
+            if not process_one_silence():
+                time.sleep(3)
+        except Exception as exc:
+            print(f"[silence] loop error: {exc}")
+            time.sleep(3)
+
+
 def repeat_loop():
     """Compare the newest episodes of each show for repeated audio. CPU only, and never in a hurry."""
     time.sleep(20)
@@ -236,7 +276,7 @@ def cleanup_played(conn, now=None):
         if now - PLAYING.get(row["id"], 0) < PLAYING_GRACE:
             continue   # loaded in the player right now
         cur = conn.execute(
-            "UPDATE episodes SET status = 'new', file_path = NULL, dl_priority = 0 WHERE id = ? "
+            "UPDATE episodes SET status = 'new', file_path = NULL, dl_priority = 0, silence_ver = 0 WHERE id = ? "
             "AND (played = 1 OR removed = 1) AND starred = 0 AND status IN ('downloaded', 'ready', 'scan_error')",
             (row["id"],),
         )
@@ -268,5 +308,6 @@ def cleanup_loop():
 
 
 def start():
-    for target in (refresh_loop, download_loop, scan_loop, marker_loop, ad_audio_loop, repeat_loop, cleanup_loop):
+    for target in (refresh_loop, download_loop, scan_loop, marker_loop, ad_audio_loop, silence_loop,
+                   repeat_loop, cleanup_loop):
         threading.Thread(target=target, daemon=True).start()

@@ -154,10 +154,11 @@ dialog.wide{width:min(560px,94vw)}
     <button class="g" id="spddn" title="Slower (0.05x)">&minus;</button><button class="g" id="spd" title="Tap to reset to 1.0x">1.0x</button><button class="g" id="spdup" title="Faster (0.05x)">+</button>
     <button class="g" id="skipad" title="Skip detected ads">Ads: on</button>
     <button class="g" id="skipio" title="Skip intro and outro">Intro/outro: on</button>
+    <button class="g" id="skipsil" title="Shorten Silence: speed through pauses. Changes this show's setting if it has one, otherwise the default">Silence: off</button>
     <button class="g" id="tagad" title="Tag a missed ad, or an ad that was skipped by mistake">Tag ad</button>
     <span class="tm" id="rem">0:00</span>
   </div>
-  <div id="foot"><div class="key" id="key" hidden><i class="ad"></i>Ad<i class="io"></i>Intro/outro</div><span></span><div id="ver">v0.0.17</div></div>
+  <div id="foot"><div class="key" id="key" hidden><i class="ad"></i>Ad<i class="io"></i>Intro/outro</div><span></span><div id="ver">v0.0.18</div></div>
 </div></div>
 <audio id="au" preload="auto"></audio>
 
@@ -367,6 +368,10 @@ async function showShows(showId) {
       <label>Keep <input id="limkeep" type="number" min="0" max="1000" placeholder="${show.keep_default}" value="${show.keep_last ?? ''}"> unplayed episodes downloaded</label>
       <button class="g" id="savelim">Save</button></div>
       <div class="msg" style="min-height:0">Days: 0 means no limit. Keep: empty means the default (${show.keep_default}), 0 means no automatic downloads. The file of a played episode is deleted some hours after you finish it, unless the episode is starred.</div>
+      <div class="bar skipbar"><label>Shorten Silence <select id="shsil" style="width:auto">
+        <option value="" ${show.shorten_silence === null ? 'selected' : ''}>Default (${show.silence_default ? 'on' : 'off'})</option>
+        <option value="1" ${show.shorten_silence === 1 ? 'selected' : ''}>On</option>
+        <option value="0" ${show.shorten_silence === 0 ? 'selected' : ''}>Off</option></select></label></div>
       <div class="bar skipbar" id="shpl"></div>
       <div class="bar"><button class="g" id="subbtn">${show.subscribed ? 'Unsubscribe' : 'Subscribe again'}</button></div>
       <div class="msg" id="rmsg">${show.subscribed ? '' : 'Not subscribed. The history is kept, but there are no new episodes, no downloads, and the show is not in any playlist.'}</div><div class="msg" id="lmsg" style="min-height:0"></div>
@@ -380,6 +385,11 @@ async function showShows(showId) {
       box.onchange = async ev => { const c = ev.target; if (!c.dataset.plm) return;
         try { await post(`/api/shows/${showId}/playlists/${c.dataset.plm}`, {on: c.checked}); sayIn('#rmsg')(c.checked ? 'Added to that playlist.' : 'Taken out of that playlist.'); }
         catch (e) { sayIn('#rmsg')(readErr(e), true); } }; }).catch(() => {});
+    $('#shsil').onchange = async ev => { const v = ev.target.value;
+      try { const r = await post(`/api/shows/${showId}/silence`, {value: v === '' ? null : v === '1'});
+        const cur = queue[qi]; if (cur && cur.show_id === +showId) { cur.show_silence = r.shorten_silence; paintToggles(); }
+        sayIn('#rmsg')('Saved. Shorten Silence is ' + (r.effective ? 'on' : 'off') + ' for this show.'); }
+      catch (e) { sayIn('#rmsg')(readErr(e), true); } };
     $('#setio').onclick = () => openIoDialog(showId, eps, () => showShows(showId));
     $('#redetect').onclick = async () => { const r = await post(`/api/shows/${showId}/redetect`);
       $('#rmsg').textContent = 'Re-checking intro and outro for ' + r.queued + ' downloaded episodes in the background. This uses the CPU only.'; };
@@ -410,7 +420,9 @@ async function showShows(showId) {
   let html = `<div class="bar"><input id="feed" type="text" placeholder="Paste a link: RSS, Apple Podcasts, Spotify, Amazon, or YouTube"><button class="p" id="addf">Add show</button></div>
     <div class="bar"><button class="g" id="opmlbtn">Import OPML file</button><input id="opml" type="file" accept=".opml,.xml,text/xml" hidden>
       <button class="g" id="ocbtn">Import from Overcast</button><input id="ocfile" type="file" accept=".opml,.xml,text/xml" hidden></div>
-    <div class="msg" id="smsg"></div>`;
+    <div class="msg" id="smsg"></div>
+    <div class="bar skipbar"><label class="chk"><input type="checkbox" id="silall"> Shorten Silence by default</label></div>
+    <div class="msg" id="tsaved" style="min-height:0"></div>`;
   if (!shows.length) html += `<div class="empty">No shows yet. Paste a link above or import an OPML file.</div>`;
   html += shows.map(s => `<div class="row" data-s="${s.id}">${s.image ? `<img src="${esc(s.image)}" alt="">` : '<div class="ph"></div>'}
     <div style="flex:1;min-width:0"><div class="t">${esc(s.title || s.feed_url)}</div>${s.subscribed ? '' : '<div class="s">Not subscribed</div>'}</div>
@@ -421,6 +433,12 @@ async function showShows(showId) {
     say('Adding...'); $('#addf').disabled = true;
     try { const r = await post('/api/shows', {url: u}); await showShows(); $('#smsg').textContent = r.note || ('Added ' + (r.title || 'show') + '.'); }
     catch (e) { say(readErr(e), true); $('#addf').disabled = false; } };
+  $('#silall').checked = silDefault;
+  $('#silall').onchange = async ev => { try { const r = await post('/api/settings/silence', {on: ev.target.checked}); silDefault = r.on; paintToggles();
+    say('Shorten Silence is now ' + (r.on ? 'on' : 'off') + ' for every show without its own setting.'); } catch (e) { say(readErr(e), true); } };
+  api('/api/stats/time-saved').then(t => { const el = $('#tsaved'); if (!el) return;
+    const m = s => s >= 3600 ? (s / 3600).toFixed(1) + ' h' : Math.round(s / 60) + ' min';
+    el.textContent = 'Time saved: ' + m(t.total) + ' in total. Speed ' + m(t.speed) + ', shortened silence ' + m(t.silence) + ', skipped ads ' + m(t.ads) + '.'; }).catch(() => {});
   $('#addf').onclick = addFeed;
   $('#feed').onkeydown = ev => { if (ev.key === 'Enter') addFeed(); };
   $('#opmlbtn').onclick = () => $('#opml').click();
@@ -612,6 +630,81 @@ function bandRanges(e, dur) {
 }
 // ---- end skip rules ----
 
+// ---- silence rules (pure functions, no DOM). Spec 6.3.2. All times are media seconds. ----
+const SIL = {KEEP: 0.08, RAMP: 0.03, BOOST: 3, MAX_RATE: 4, MIN_PAUSE: 0.18};
+// Boost for a pause of L seconds at base speed. Short pauses get less, so each keeps at least MIN_PAUSE.
+function silenceBoost(L, base) {
+  const middle = L - 2 * SIL.KEEP; if (middle <= 0) return 1;
+  let b = Math.min(SIL.BOOST, SIL.MAX_RATE / base);
+  const room = SIL.MIN_PAUSE - 2 * SIL.KEEP; if (room > 0) b = Math.min(b, middle / room);
+  return Math.max(1, b);
+}
+// The plan for one episode: pauses that do not touch a skipped range, with their boost and the
+// seconds saved by each (suffix sums, for the remaining time). skips: [{start, end}].
+function silencePlan(intervals, skips, base) {
+  const ivs = [];
+  for (const [s, e] of intervals || []) {
+    if (skips.some(k => s < k.end && e > k.start)) continue;   // R-SS-14
+    const b = silenceBoost(e - s, base); if (b <= 1) continue;
+    ivs.push({s, e, b, r: Math.min(SIL.RAMP, (e - s - 2 * SIL.KEEP) / 2)});
+  }
+  ivs.sort((x, y) => x.s - y.s);
+  const after = new Array(ivs.length + 1).fill(0);   // after[i] = seconds saved by intervals i..end
+  for (let i = ivs.length - 1; i >= 0; i--) after[i] = after[i + 1] + (ivs[i].e - ivs[i].s) / base - ivWall(ivs[i], ivs[i].s, ivs[i].e, base);
+  return {ivs, after, base};
+}
+// Rate factor (1 = base speed) at offset u into an interval: keep, ramp up, boost, ramp down, keep.
+function ivFactor(iv, u) {
+  const L = iv.e - iv.s, k = SIL.KEEP, r = iv.r;
+  if (u <= k || u >= L - k) return 1;
+  if (u < k + r) return 1 + (iv.b - 1) * (u - k) / r;
+  if (u > L - k - r) return 1 + (iv.b - 1) * (L - k - u) / r;
+  return iv.b;
+}
+// Wall seconds to play media time t0..t1 inside one interval at base speed. Exact, piece by piece.
+function ivWall(iv, t0, t1, base) {
+  const L = iv.e - iv.s, k = SIL.KEEP, r = iv.r, b = iv.b;
+  const pieces = [[0, k, 1, 1], [k, k + r, 1, b], [k + r, L - k - r, b, b], [L - k - r, L - k, b, 1], [L - k, L, 1, 1]];
+  const a = Math.max(0, t0 - iv.s), z = Math.min(L, t1 - iv.s);
+  let w = 0;
+  for (const [p0, p1, f0, f1] of pieces) {
+    const x0 = Math.max(a, p0), x1 = Math.min(z, p1); if (x1 <= x0) continue;
+    if (f0 === f1) { w += (x1 - x0) / f0; continue; }
+    const f = x => f0 + (f1 - f0) * (x - p0) / (p1 - p0), slope = (f1 - f0) / (p1 - p0);
+    w += Math.log(f(x1) / f(x0)) / slope;   // integral of 1/f over a straight ramp
+  }
+  return w / base;
+}
+// Index of the interval holding t, or -1. Binary search.
+function findIv(plan, t) {
+  let lo = 0, hi = plan.ivs.length - 1;
+  while (lo <= hi) { const m = (lo + hi) >> 1, iv = plan.ivs[m];
+    if (t < iv.s) hi = m - 1; else if (t >= iv.e) lo = m + 1; else return m; }
+  return -1;
+}
+// Playback rate at media time t. With no plan or the feature off, this is the base speed (R-SS-12).
+function silenceRate(plan, t, base, on) {
+  if (!on || !plan) return base;
+  const i = findIv(plan, t); if (i < 0) return base;
+  return Math.min(SIL.MAX_RATE, base * ivFactor(plan.ivs[i], t - plan.ivs[i].s));
+}
+// Wall seconds from media time t to dur, with shortening (R-SS-7).
+function wallRemaining(plan, t, dur, base, on) {
+  let w = Math.max(0, dur - t) / base;
+  if (!on || !plan || !plan.ivs.length) return w;
+  let lo = 0, hi = plan.ivs.length;   // first interval that ends after t
+  while (lo < hi) { const m = (lo + hi) >> 1; if (plan.ivs[m].e <= t) lo = m + 1; else hi = m; }
+  if (lo >= plan.ivs.length) return w;
+  const iv = plan.ivs[lo];
+  if (t > iv.s) { w -= (iv.e - t) / base - ivWall(iv, t, iv.e, base); lo++; }
+  return w - plan.after[lo];
+}
+// Split media time played at a rate into seconds saved by speed and by silence (spec 6.3.4).
+function savedSplit(dt, base, rate) {
+  return {speed: Math.max(0, dt - dt / base), silence: Math.max(0, dt / base - dt / rate)};
+}
+// ---- end silence rules ----
+
 function drawBands() {
   const e = queue[qi], dur = au.duration, bands = bandRanges(e, isFinite(dur) ? dur : 0);
   const label = b => (b.kind === 'ad' ? 'Ad' : 'Intro/outro') + ' ' + fmt(b.start) + ' to ' + fmt(b.end);
@@ -625,10 +718,12 @@ async function play(i) {
   try { Object.assign(e, await api('/api/episodes/' + e.id)); } catch (_) { /* play with what we have */ }
   au.src = '/audio/' + e.id;
   au.playbackRate = speed;
-  e._outroDone = false; e._introDone = false; e._preview = null;
+  e._outroDone = false; e._introDone = false; e._preview = null; e._sil = null;
+  silPlan = null; silLastT = null; paintToggles();
+  loadSilence(e);
   drawBands();
   au.onloadedmetadata = () => {
-    drawBands();
+    drawBands(); buildSilPlan();
     let start = (e.position > 5 && e.position < au.duration - 10) ? e.position : 0;
     const a = introAction(e, start, au.duration, skipIO);
     if (a && a.type === 'skip') { e._introDone = true; start = a.to; toast('Skipped intro'); }
@@ -678,15 +773,17 @@ au.ontimeupdate = () => {
   else if (ia) { e._introDone = true; toast('Skipped intro'); au.currentTime = ia.to; return; }
   const previewing = e._preview && au.currentTime >= e._preview[0] && au.currentTime <= e._preview[1];
   if (skipAds && !previewing) for (const [s, t] of e.ads) if (au.currentTime >= s && au.currentTime < t - 0.5) {
+    saved.ads += (t - au.currentTime) / speed; silLastT = null;
     au.currentTime = t; toast('Skipped ad (' + Math.round(t - s) + 's)'); break; }
   $('#seek').value = au.duration ? (au.currentTime / au.duration) * 1000 : 0;
   $('#cur').textContent = fmt(au.currentTime);
-  $('#rem').textContent = '-' + fmt((au.duration - au.currentTime) / au.playbackRate);
+  paintRemaining();
   if (Date.now() - lastSave > 5000) { lastSave = Date.now(); save(false); }
+  if (Date.now() - lastSavedReport > 30000) reportSaved();
 };
 au.onplay = () => $('#play').innerHTML = '&#10074;&#10074;';
-au.onpause = () => { $('#play').innerHTML = '&#9654;'; save(false); };
-au.onended = async () => { await save(true); await advance(true); if (tab === 'pl' && curPl) showPlaylist(curPl.id); };
+au.onpause = () => { $('#play').innerHTML = '&#9654;'; save(false); reportSaved(); };
+au.onended = async () => { reportSaved(); await save(true); await advance(true); if (tab === 'pl' && curPl) showPlaylist(curPl.id); };
 $('#play').onclick = () => au.paused ? au.play() : au.pause();
 $('#back').onclick = () => au.currentTime -= 15;
 $('#fwd').onclick = () => au.currentTime += 30;
@@ -695,19 +792,83 @@ const setSpeed = v => {
   speed = Math.min(SPEED_MAX, Math.max(SPEED_MIN, Math.round(v * 100) / 100));   // round to hundredths to avoid float drift
   au.playbackRate = speed;
   $('#spd').textContent = speed.toFixed(2).replace(/0$/, '') + 'x';
+  buildSilPlan();
 };
 $('#spddn').onclick = () => setSpeed(speed - SPEED_STEP);
 $('#spdup').onclick = () => setSpeed(speed + SPEED_STEP);
 $('#spd').onclick = () => setSpeed(1);
-const paintToggles = () => { $('#skipad').textContent = 'Ads: ' + (skipAds ? 'on' : 'off'); $('#skipio').textContent = 'Intro/outro: ' + (skipIO ? 'on' : 'off'); };
-$('#skipad').onclick = () => { skipAds = !skipAds; saveFlag('skipAds', skipAds); paintToggles(); };
-$('#skipio').onclick = () => { skipIO = !skipIO; saveFlag('skipIO', skipIO); paintToggles(); };
+const paintToggles = () => { $('#skipad').textContent = 'Ads: ' + (skipAds ? 'on' : 'off'); $('#skipio').textContent = 'Intro/outro: ' + (skipIO ? 'on' : 'off');
+  const e = queue[qi], on = silenceOn(e);
+  $('#skipsil').textContent = 'Silence: ' + (on ? 'on' : 'off') + (on && e && !e._sil ? ' (not ready)' : ''); };
+$('#skipad').onclick = () => { skipAds = !skipAds; saveFlag('skipAds', skipAds); paintToggles(); buildSilPlan(); };
+$('#skipio').onclick = () => { skipIO = !skipIO; saveFlag('skipIO', skipIO); paintToggles(); buildSilPlan(); };
+$('#skipsil').onclick = async () => {
+  const e = queue[qi], on = !silenceOn(e);
+  try {
+    if (e && e.show_silence !== null && e.show_silence !== undefined) {
+      await post(`/api/shows/${e.show_id}/silence`, {value: on}); e.show_silence = on ? 1 : 0;
+      toast('Shorten Silence ' + (on ? 'on' : 'off') + ' for this show');
+    } else {
+      await post('/api/settings/silence', {on}); silDefault = on;
+      toast('Shorten Silence ' + (on ? 'on' : 'off') + ' (default for all shows)');
+    }
+  } catch (_) { toast('Could not save the Shorten Silence setting'); }
+  paintToggles(); paintRemaining(); };
+
+// ---- Shorten Silence in the player ----
+let silDefault = false, silPlan = null, silLastT = null, silLastTick = 0, silSteady = 0, lastSavedReport = Date.now();
+const saved = {speed: 0, silence: 0, ads: 0};   // seconds saved since the last report
+api('/api/settings/silence').then(r => { silDefault = r.on; paintToggles(); }).catch(() => {});
+function silenceOn(e) { if (!e) return silDefault; return e.show_silence === null || e.show_silence === undefined ? silDefault : !!e.show_silence; }
+// Pauses inside a range that is skipped are ignored (R-SS-14). Rebuilt when speed, toggles, or skip ranges change.
+function buildSilPlan() {
+  const e = queue[qi], dur = au.duration;
+  if (!e || !e._sil) { silPlan = null; return; }
+  const skips = bandRanges(e, isFinite(dur) ? dur : 0).filter(b => b.kind === 'ad' ? skipAds : skipIO);
+  silPlan = silencePlan(e._sil, skips, speed);
+}
+async function loadSilence(e) {
+  try { const r = await api(`/api/episodes/${e.id}/silence`); if (queue[qi] === e) { e._sil = r.intervals; buildSilPlan(); } }
+  catch (_) { e._sil = null; }
+  paintToggles();
+}
+function paintRemaining() {
+  const e = queue[qi], dur = au.duration; if (!e || !isFinite(dur)) return;
+  const on = silenceOn(e), wall = wallRemaining(silPlan, au.currentTime, dur, speed, on);
+  $('#rem').textContent = '-' + fmt(wall);
+  const eff = wall > 1 && on && silPlan ? (dur - au.currentTime) / wall : 0;   // effective speed (R-SS-8)
+  $('#rem').title = eff ? 'Effective speed ' + eff.toFixed(2) + 'x' : '';
+  if (on && e._sil) $('#skipsil').textContent = 'Silence: on' + (eff ? ' ' + eff.toFixed(2) + 'x' : '');
+}
+// Every 5 ms: set the rate for the current media time, and count the time saved.
+// If the browser slows the timer down (a hidden tab, a locked phone), stay at base speed: a late tick
+// could leave the boost on over speech. Shortening resumes after 20 steady ticks.
+setInterval(() => {
+  const e = queue[qi], now = performance.now(), gap = now - silLastTick; silLastTick = now;
+  if (!e || au.paused || au.seeking) { silLastT = null; return; }
+  silSteady = gap > 60 ? 0 : silSteady + 1;
+  const t = au.currentTime, rate = silSteady >= 20 ? silenceRate(silPlan, t, speed, silenceOn(e)) : speed;
+  if (silLastT !== null) { const dt = t - silLastT;
+    if (dt > 0 && dt < 0.5) { const s = savedSplit(dt, speed, au.playbackRate); saved.speed += s.speed; saved.silence += s.silence; } }
+  silLastT = t;
+  if (Math.abs(au.playbackRate - rate) > 0.001) au.playbackRate = rate;
+}, 5);
+au.onseeking = () => { silLastT = null; };
+function reportSaved() {
+  const e = queue[qi]; lastSavedReport = Date.now();
+  if (!e || saved.speed + saved.silence + saved.ads < 0.5) return;
+  const body = {episode_id: e.id, speed: saved.speed, silence: saved.silence, ads: saved.ads};
+  saved.speed = saved.silence = saved.ads = 0;
+  post('/api/stats/time-saved', body).catch(() => {});
+}
+
 paintToggles();
 let tick = 0;
 setInterval(async () => { const e = queue[qi]; if (!e) return;
-  tick++; if (e.status === 'ready' && tick % 6) return;   // every 5s while scanning, every 30s otherwise
+  tick++; if (e.status === 'ready' && e._sil && tick % 6) return;   // every 5s while scanning, every 30s otherwise
   try { const f = await api('/api/episodes/' + e.id); e.ads = f.ads; e.status = f.status; e.markers = f.markers;
-    e.intro_skip = f.intro_skip; e.outro_skip = f.outro_skip; drawBands(); } catch (_) {} }, 5000);
+    e.intro_skip = f.intro_skip; e.outro_skip = f.outro_skip; e.show_silence = f.show_silence; drawBands(); buildSilPlan(); } catch (_) {}
+  if (!e._sil && tick % 6 === 0) loadSilence(e); }, 5000);
 
 // ---- intro/outro marking tool (show page) ----
 const IO_ROWS = [['intro_start', 'Intro starts at'], ['intro_end', 'Intro ends at'], ['outro_start', 'Outro starts at'], ['outro_end', 'Outro ends at']];

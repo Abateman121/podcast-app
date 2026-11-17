@@ -106,6 +106,13 @@ CREATE TABLE IF NOT EXISTS repeats (
 );
 CREATE INDEX IF NOT EXISTS repeats_show ON repeats(show_id);
 -- Small counters shared by the web app and the workers.
+CREATE TABLE IF NOT EXISTS time_saved (
+    episode_id INTEGER PRIMARY KEY REFERENCES episodes(id) ON DELETE CASCADE,
+    show_id INTEGER NOT NULL REFERENCES shows(id) ON DELETE CASCADE,
+    speed REAL NOT NULL DEFAULT 0,
+    silence REAL NOT NULL DEFAULT 0,
+    ads REAL NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value INTEGER NOT NULL DEFAULT 0
@@ -125,6 +132,7 @@ SHOW_COLUMNS = {
     "keep_last": "INTEGER",         # keep the newest N unplayed episodes downloaded (NULL = the default, 0 = none)
     "subscribed": "INTEGER DEFAULT 1",   # 0 = history only: no refresh, no downloads, not in playlists
     "overcast_id": "TEXT",          # set by the Overcast import, so a second import finds the same show
+    "shorten_silence": "INTEGER",   # NULL = use the default, 1 = on, 0 = off
 }
 EPISODE_COLUMNS = {
     "markers_json": "TEXT DEFAULT '{}'",
@@ -136,6 +144,7 @@ EPISODE_COLUMNS = {
     "played_at": "INTEGER DEFAULT 0",     # when it was finished, for the cleanup of played files
     "dl_priority": "INTEGER DEFAULT 0",   # 1 = next up in the player, so download and scan it first
     "overcast_id": "TEXT",                # set by the Overcast import
+    "silence_ver": "INTEGER DEFAULT 0",   # analyzer version of the stored silence map (0 = none yet)
 }
 PLAYLIST_COLUMNS = {
     "kind": "TEXT DEFAULT 'smart'",       # smart or builtin

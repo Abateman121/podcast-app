@@ -16,6 +16,7 @@ import markers
 import overcast
 import playlists
 import repeats
+import silence
 import sources
 import workers
 from progress import ERRORS, PLAYING, PROGRESS
@@ -58,7 +59,8 @@ EP_COLS = (
     "e.id, e.show_id, s.title AS show_title, s.image AS show_image, e.title, e.published, "
     "e.duration, e.status, e.played, e.position, e.ads_json, e.ads_audio_json, e.markers_json, e.file_path, "
     "COALESCE(e.starred, 0) AS starred, COALESCE(e.removed, 0) AS removed, "
-    "COALESCE(s.intro_skip, 0) AS intro_skip, COALESCE(s.outro_skip, 0) AS outro_skip"
+    "COALESCE(s.intro_skip, 0) AS intro_skip, COALESCE(s.outro_skip, 0) AS outro_skip, "
+    "s.shorten_silence AS show_silence"
 )
 
 
@@ -189,6 +191,17 @@ class ProgressIn(BaseModel):
     played: bool = False
 
 
+class SilenceShowIn(BaseModel):
+    value: Optional[bool] = None   # None = use the default
+
+
+class SavedIn(BaseModel):
+    episode_id: int
+    speed: float = 0
+    silence: float = 0
+    ads: float = 0
+
+
 # ---------- shows ----------
 
 @app.get("/api/shows")
@@ -197,16 +210,49 @@ def list_shows():
     rows = conn.execute(
         "SELECT id, title, image, feed_url, COALESCE(intro_skip, 0) AS intro_skip, "
         "COALESCE(outro_skip, 0) AS outro_skip, intro_template_len, outro_template_len, "
-        "COALESCE(newer_than_days, 0) AS newer_than_days, keep_last, COALESCE(subscribed, 1) AS subscribed "
-        "FROM shows ORDER BY title"
+        "COALESCE(newer_than_days, 0) AS newer_than_days, keep_last, COALESCE(subscribed, 1) AS subscribed, "
+        "shorten_silence FROM shows ORDER BY title"
     ).fetchall()
+    silence_default = silence.global_on(conn)
     conn.close()
     out = []
     for r in rows:
         d = dict(r)
         d["keep_default"] = feeds.AUTO_DOWNLOAD_LATEST
+        d["silence_default"] = silence_default
         out.append(d)
     return out
+
+
+@app.post("/api/shows/{show_id}/silence")
+def set_show_silence(show_id: int, body: SilenceShowIn):
+    """Per-show Shorten Silence: true = on, false = off, null = use the default."""
+    value = None if body.value is None else int(body.value)
+    conn = db.connect()
+    cur = conn.execute("UPDATE shows SET shorten_silence = ? WHERE id = ?", (value, show_id))
+    conn.commit()
+    on = silence.effective(conn, value)
+    conn.close()
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Show not found")
+    return {"shorten_silence": value, "effective": on}
+
+
+@app.get("/api/settings/silence")
+def get_silence_setting():
+    conn = db.connect()
+    on = silence.global_on(conn)
+    conn.close()
+    return {"on": on}
+
+
+@app.post("/api/settings/silence")
+def set_silence_setting(body: FlagIn):
+    conn = db.connect()
+    db.meta_set(conn, silence.SETTING_KEY, 1 if body.on else 0)
+    conn.commit()
+    conn.close()
+    return {"on": body.on}
 
 
 @app.post("/api/shows")
@@ -856,6 +902,69 @@ def playlist_next(playlist_id: int, after: int):
         raise HTTPException(404, str(exc))
     finally:
         conn.close()
+
+
+# ---------- shorten silence ----------
+
+@app.post("/api/episodes/{episode_id}/analyze")
+def analyze_episode(episode_id: int):
+    """Queue a new silence analysis. The worker picks it up within a few seconds."""
+    conn = db.connect()
+    row = conn.execute("SELECT file_path FROM episodes WHERE id = ?", (episode_id,)).fetchone()
+    if row is None:
+        conn.close()
+        raise HTTPException(404, "Episode not found")
+    if not row["file_path"]:
+        conn.close()
+        raise HTTPException(400, "Episode is not downloaded")
+    silence.forget(conn, episode_id)
+    conn.commit()
+    conn.close()
+    return {"queued": True}
+
+
+@app.get("/api/episodes/{episode_id}/silence")
+def get_silence(episode_id: int):
+    """The silence map, or 404 while there is none (not analysed yet, or the file changed)."""
+    conn = db.connect()
+    row = conn.execute("SELECT file_path, COALESCE(silence_ver, 0) AS ver FROM episodes WHERE id = ?",
+                       (episode_id,)).fetchone()
+    if row is None:
+        conn.close()
+        raise HTTPException(404, "Episode not found")
+    data = silence.load_map(episode_id, row["file_path"])
+    if data is None and row["ver"] and row["file_path"] and os.path.exists(silence.map_path(episode_id)):
+        silence.forget(conn, episode_id)   # the map no longer fits the file: analyse again
+        conn.commit()
+    conn.close()
+    if data is None:
+        raise HTTPException(404, "No silence map yet")
+    return {"episode_id": episode_id, "analyzer_version": data["analyzer_version"], "intervals": data["intervals"]}
+
+
+@app.get("/api/stats/time-saved")
+def time_saved(show_id: Optional[int] = None, episode_id: Optional[int] = None):
+    """Seconds saved, by source: speed, silence, ads. Total over everything unless a show or episode is given."""
+    conn = db.connect()
+    out = silence.totals(conn, show_id, episode_id)
+    if show_id is None and episode_id is None:
+        out["shows"] = silence.by_show(conn)
+    conn.close()
+    return out
+
+
+@app.post("/api/stats/time-saved")
+def add_time_saved(body: SavedIn):
+    """The player reports seconds saved since its last report."""
+    conn = db.connect()
+    try:
+        parts = silence.add_saved(conn, body.episode_id, body.speed, body.silence, body.ads)
+        conn.commit()
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    finally:
+        conn.close()
+    return {"added": dict(zip(("speed", "silence", "ads"), parts))}
 
 
 @app.post("/api/refresh")
