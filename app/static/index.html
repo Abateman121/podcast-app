@@ -165,7 +165,7 @@ dialog.wide{width:min(560px,94vw)}
     <button class="g" id="tagad" title="Tag a missed ad, or an ad that was skipped by mistake">Tag ad</button>
     <span class="tm" id="rem">0:00</span>
   </div>
-  <div id="foot"><div class="key" id="key" hidden><i class="ad"></i>Ad<i class="io"></i>Intro/outro</div><span></span><div id="ver">v0.0.23</div></div>
+  <div id="foot"><div class="key" id="key" hidden><i class="ad"></i>Ad<i class="io"></i>Intro/outro</div><span></span><div id="ver">v0.0.24</div></div>
 </div></div>
 <audio id="au" preload="auto"></audio>
 
@@ -273,7 +273,7 @@ async function showPlaylists() {
     <div class="msg">The number is how many unplayed episodes a playlist holds. Episodes that are not downloaded yet are listed too. The next one up is downloaded while you listen.</div>`;
   $('#newpl').onclick = () => openPlSettings(null);
   $('#refresh').onclick = () => post('/api/refresh');
-  document.querySelectorAll('[data-pl]').forEach(b => b.onclick = () => showPlaylist(+b.dataset.pl));
+  document.querySelectorAll('[data-pl]').forEach(b => b.onclick = () => go('#/playlists/' + b.dataset.pl));
 }
 
 async function showPlaylist(id) {
@@ -287,7 +287,7 @@ async function showPlaylist(id) {
     <div class="msg" id="pmsg"></div>`
     + (eps.map((e, i) => epRow(e, i, {move: true})).join('') || `<div class="empty">${p.builtin_type === 'queue' ? 'Up Next is empty. Use Play Next or Play Last on any episode.' : 'Nothing here right now.'}</div>`)
     + (page.total > eps.length ? `<div class="msg">Showing the first ${eps.length} of ${page.total}.</div>` : '');
-  $('#bk').onclick = showPlaylists;
+  $('#bk').onclick = () => go('#/playlists');
   $('#plset').onclick = () => openPlSettings(id);
   if (clear) $('#plclear').onclick = async () => { await send('PUT', `/api/playlists/${id}/order`, {episode_ids: []}); showPlaylist(id); };
   wireRows(eps, {ctx: {type: 'playlist', id}, pl: p, reload: () => showPlaylist(id), say: sayIn('#pmsg')});
@@ -342,7 +342,7 @@ async function openPlSettings(id) {
   }
   $('#psdel').hidden = !id || !smart;
   $('#psdel').onclick = async () => { if (!confirm('Delete the playlist "' + p.title + '"? No episodes are deleted.')) return;
-    await api('/api/playlists/' + id, {method: 'DELETE'}); $('#psdlg').close(); showPlaylists(); };
+    await api('/api/playlists/' + id, {method: 'DELETE'}); $('#psdlg').close(); go('#/playlists', true); };
   $('#pssave').onclick = async () => {
     const f = {icon: $('#psi').value.trim(), color: $('#psc').value, sort: $('#pso').value, continuous: $('#psn').checked, play_top_next: $('#pstop').checked};
     if (smart) { f.title = $('#pst').value.trim(); f.include_all_shows = $('#psall').checked; f.priority_mode = $('#psm').value;
@@ -355,7 +355,7 @@ async function openPlSettings(id) {
       if (id) await send('PATCH', '/api/playlists/' + id, f); else pid = (await post('/api/playlists', f)).id;
       if (smart) await send('PUT', `/api/playlists/${pid}/shows`, {shows: [...high.map(h => ({show_id: h, priority: 'high'})),
         ...Object.keys(pri).filter(k => pri[k] !== 'high').map(k => ({show_id: +k, priority: pri[k]}))]});
-      $('#psdlg').close(); showPlaylist(pid);
+      $('#psdlg').close(); go('#/playlists/' + pid);
     } catch (e) { say(readErr(e), true); } };
   say(''); $('#psdlg').showModal();
 }
@@ -385,7 +385,7 @@ async function showShows(showId) {
       <div id="rep" data-show="${+showId}"></div>`;
     html += eps.map((e, i) => epRow(e, i, {})).join('');
     $('#main').innerHTML = html;
-    $('#bk').onclick = () => showShows();
+    $('#bk').onclick = () => go('#/shows');
     $('#subbtn').onclick = async () => { await post(`/api/shows/${showId}/${show.subscribed ? 'unsubscribe' : 'subscribe'}`); showShows(showId); };
     api(`/api/shows/${showId}/playlists`).then(pls => { const box = $('#shpl'); if (!box || !pls.length) return;
       box.innerHTML = '<label>In playlists:</label>' + pls.map(p => `<label><input type="checkbox" data-plm="${p.id}" style="width:auto" ${p.member || p.all_shows ? 'checked' : ''} ${p.all_shows ? 'disabled' : ''}> ${esc(p.title)}${p.all_shows ? ' (all shows)' : ''}</label>`).join('');
@@ -461,7 +461,7 @@ async function showShows(showId) {
   document.querySelectorAll('[data-delshow]').forEach(b => b.onclick = async ev => { ev.stopPropagation();
     if (!confirm('Delete "' + b.dataset.name + '" and its downloaded audio?')) return;
     await api('/api/shows/' + b.dataset.delshow, {method: 'DELETE'}); showShows(); });
-  document.querySelectorAll('[data-s]').forEach(r => r.onclick = () => showShows(r.dataset.s));
+  document.querySelectorAll('[data-s]').forEach(r => r.onclick = () => go('#/shows/' + r.dataset.s));
 }
 
 // ---- Overcast import (Shows tab) ----
@@ -626,10 +626,26 @@ async function pollQueue() {
     if (tab === 'qu') drawQueue(q);
   } catch (e) { /* server restarting, try again next tick */ }
 }
-function render() { tab === 'pl' ? showPlaylists() : tab === 'sh' ? showShows() : pollQueue(); }
+// ---- navigation: each screen has its own address, so the browser's Back and Forward buttons work (#54) ----
+// #/playlists, #/playlists/<id>, #/shows, #/shows/<id>, #/downloads. Changing the hash never reloads the page, so playback continues.
+const TAB_PATH = {pl: 'playlists', sh: 'shows', qu: 'downloads'};
+function route() {
+  const [, view, id] = location.hash.split('/');
+  const t = Object.keys(TAB_PATH).find(k => TAB_PATH[k] === view) || 'pl';
+  tab = t; document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x.dataset.t === t));
+  if (t === 'pl') id ? showPlaylist(+id) : showPlaylists();
+  else if (t === 'sh') id ? showShows(id) : showShows();
+  else pollQueue();
+}
+// Go to a screen and add a history entry. replace: true swaps the current entry instead (after a delete, say).
+function go(hash, replace) {
+  if (location.hash === hash) { route(); return; }
+  if (replace) { history.replaceState(null, '', hash); route(); } else location.hash = hash;
+}
+window.addEventListener('hashchange', route);
+function render() { route(); }
 setInterval(pollQueue, 2500);
-$('#tabs').onclick = ev => { const b = ev.target.closest('button'); if (!b) return; tab = b.dataset.t;
-  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b)); render(); };
+$('#tabs').onclick = ev => { const b = ev.target.closest('button'); if (!b || !b.dataset.t) return; go('#/' + TAB_PATH[b.dataset.t]); };
 
 // ---- skip rules (pure functions, no DOM) ----
 // Intro to skip: detected markers first, otherwise the show's fixed seconds from the start.
