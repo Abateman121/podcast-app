@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="bg" cx=".5" cy=".38" r=".75">
+      <stop offset="0" stop-color="#235A94"/>
+      <stop offset="1" stop-color="#0B2545"/>
+    </radialGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16365F"/>
+      <stop offset=".46" stop-color="#4C8CC8"/>
+      <stop offset=".5" stop-color="#F1F5F9"/>
+      <stop offset="1" stop-color="#CBD8E5"/>
+    </linearGradient>
+    <clipPath id="fishBody"><path d="M96 256C150 180 300 160 390 214C420 232 440 246 452 256C440 266 420 280 390 298C300 352 150 332 96 256Z"/></clipPath>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M120 300V262A136 136 0 0 1 392 262V300" fill="none" stroke="#DDE6EE" stroke-width="26" stroke-linecap="round"/>
+  <rect x="90" y="268" width="62" height="118" rx="28" fill="#FF7A3D"/>
+  <rect x="360" y="268" width="62" height="118" rx="28" fill="#FF7A3D"/>
+  <g transform="translate(140 183) scale(.46)">
+    <path d="M232 182L268 128C272 122 280 124 280 131L286 176Z" fill="#16365F"/>
+    <path d="M118 256L58 196C52 190 44 195 47 203L70 256L47 309C44 317 52 322 58 316Z" fill="#16365F"/>
+    <path d="M96 256C150 180 300 160 390 214C420 232 440 246 452 256C440 266 420 280 390 298C300 352 150 332 96 256Z" fill="url(#body)"/>
+    <g clip-path="url(#fishBody)" fill="none" stroke="#24405F" stroke-width="10" stroke-linecap="round">
+      <path d="M150 282C230 304 320 304 400 278"/>
+      <path d="M176 304C240 322 320 320 380 302"/>
+    </g>
+    <circle cx="404" cy="246" r="14" fill="#0B2545"/>
+  </g>
+</svg>
