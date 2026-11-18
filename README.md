@@ -2,7 +2,7 @@
 
 SkipJack is a self-hosted podcast app for myself. The repo and the Docker image are still named `podcast-app`. It pulls in shows from almost any link, downloads the latest episodes, transcribes them on the GPU, and automatically skips the ads while you listen.
 
-**Current version: v0.0.22** (shown in the bottom right of the player bar on every screen)
+**Current version: v0.0.23** (shown in the bottom right of the player bar on every screen)
 
 ## Features
 
@@ -133,6 +133,7 @@ Everything that has been added or changed, newest first. Each version is a git t
 
 | Version | Date | Highlights |
 |---|---|---|
+| v0.0.23 | 2026-11-18 | Tag ad: Play on the end time plays from that time |
 | v0.0.22 | 2026-11-18 | New app icon: a skipjack inside a pair of headphones |
 | v0.0.21 | 2026-11-18 | Renamed to SkipJack, Set intro/outro opens with the current times, progress bar for Repeated audio |
 | v0.0.20 | 2026-11-18 | Asks before a shorter section replaces an intro or outro template |
@@ -146,6 +147,9 @@ Everything that has been added or changed, newest first. Each version is a git t
 | v0.0.12 | 2026-11-10 | Image built by GitHub Actions and published to ghcr.io |
 | v0.0.11 | 2026-11-10 | Better ad detection rules, saved transcripts, Re-scan ads |
 | v0.0.1 | 2026-11-10 | Downloads queue, OPML import, Apple/Spotify/Amazon/YouTube links, delete shows |
+
+### v0.0.23 (2026-11-18)
+- **Tag an ad**: **Play** next to "and ends at" now plays from the end time in the field. It used to start 5 seconds earlier. Ad skipping stays paused around the range you are checking, the same as before.
 
 ### v0.0.22 (2026-11-18)
 - New app icon: a striped skipjack inside a pair of headphones, on deep blue. It replaces the icon from v0.0.19 in the browser tab (`icon-32.png`), on the iPhone home screen (`icon-180.png`, full-bleed so iOS rounds the corners itself), and in the web app manifest (`icon-192.png`, `icon.png`, and a new `icon-512.png`).
