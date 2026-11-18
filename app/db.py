@@ -133,6 +133,8 @@ SHOW_COLUMNS = {
     "subscribed": "INTEGER DEFAULT 1",   # 0 = history only: no refresh, no downloads, not in playlists
     "overcast_id": "TEXT",          # set by the Overcast import, so a second import finds the same show
     "shorten_silence": "INTEGER",   # NULL = use the default, 1 = on, 0 = off
+    "intro_template_ref": "TEXT",   # JSON {episode_id, start, end}: where the intro template was cut from
+    "outro_template_ref": "TEXT",   # same for the outro template
 }
 EPISODE_COLUMNS = {
     "markers_json": "TEXT DEFAULT '{}'",

@@ -1,8 +1,8 @@
-# podcast-app *AI SLOP*
+# SkipJack *AI SLOP*
 
-A self-hosted podcast app for myself. It pulls in shows from almost any link, downloads the latest episodes, transcribes them on the GPU, and automatically skips the ads while you listen.
+SkipJack is a self-hosted podcast app for myself. The repo and the Docker image are still named `podcast-app`. It pulls in shows from almost any link, downloads the latest episodes, transcribes them on the GPU, and automatically skips the ads while you listen.
 
-**Current version: v0.0.16** (shown in the bottom right of the player bar on every screen)
+**Current version: v0.0.20** (shown in the bottom right of the player bar on every screen)
 
 ## Features
 
@@ -129,6 +129,10 @@ The app compares the newest downloaded episodes of each show and looks for secti
 - Layout follows your system light or dark theme and is safe-area aware for phones.
 
 ## Changes in v0.0.20
+- The app is now called **SkipJack**: browser tab, home screen name, and web app manifest. The repo, the image (`ghcr.io/abateman121/podcast-app`), and the `/data` folder keep their names, so nothing changes in the compose file.
+- **Set intro/outro** now opens with the current times filled in. It picks the episode the template was cut from if that episode is still downloaded, and fills in the saved times. For other episodes it fills in the intro and outro detected in that episode. Changing the episode fills the rows again.
+- **Repeated audio**: Play now opens a progress bar for that section, with the current time and −5s and +5s buttons. The bar covers the section plus 5 seconds on each side, so you can hear the edges. Play turns into Pause, and pressing it again resumes where you stopped.
+- The episode and times each template was cut from are now saved (new show columns `intro_template_ref` and `outro_template_ref`). Templates made before this version have none, so the dialog uses the detected times until you save again.
 - **Repeated audio**: a show has one intro template and one outro template, and the last one accepted replaces the one before. Choosing **Use as intro** or **Use as outro** on a section that is shorter than the current template now asks first. This stops a partial section from replacing the full intro or outro by mistake.
 
 ## Changes in v0.0.19

@@ -409,7 +409,7 @@ def accept(conn, repeat_id, kind):
     if kind == "ad":
         result["note"] = adlearn.add_tag(conn, ep["id"], o["start"], o["end"], "ad")["note"]
     else:
-        markers.create_template(conn, row["show_id"], kind, ep["file_path"], o["start"], o["end"])
+        markers.create_template(conn, row["show_id"], kind, ep["file_path"], o["start"], o["end"], ep["id"])
         result["queued"] = markers.queue_redetect(conn, row["show_id"])
     conn.execute("DELETE FROM repeats WHERE id = ?", (repeat_id,))
     conn.commit()
