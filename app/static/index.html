@@ -165,7 +165,7 @@ dialog.wide{width:min(560px,94vw)}
     <button class="g" id="tagad" title="Tag a missed ad, or an ad that was skipped by mistake">Tag ad</button>
     <span class="tm" id="rem">0:00</span>
   </div>
-  <div id="foot"><div class="key" id="key" hidden><i class="ad"></i>Ad<i class="io"></i>Intro/outro</div><span></span><div id="ver">v0.0.19</div></div>
+  <div id="foot"><div class="key" id="key" hidden><i class="ad"></i>Ad<i class="io"></i>Intro/outro</div><span></span><div id="ver">v0.0.20</div></div>
 </div></div>
 <audio id="au" preload="auto"></audio>
 
@@ -550,6 +550,16 @@ async function loadRepeats(showId) {
       if (act === 'scan') { await post(`/api/shows/${showId}/repeats/scan`); await loadRepeats(showId); return; }
       repau.pause();
       if (act === 'ignore') { await post(`/api/repeats/${b.dataset.rid}/ignore`); await loadRepeats(showId); say('Ignored. That section will not be suggested again.'); return; }
+      if (act === 'intro' || act === 'outro') {
+        // A show has one intro and one outro template. Warn before a shorter section replaces a longer one.
+        const it = r.items.find(x => x.id === +b.dataset.rid);
+        const s = (await api('/api/shows')).find(x => x.id === +showId) || {};
+        const old = s[act + '_template_len'];
+        if (it && old && it.seconds < old - 1 && !confirm('This show already has a ' + old.toFixed(1) + ' second ' + act
+            + ' template. This section is only ' + it.seconds.toFixed(1) + ' seconds, and it would replace that template.'
+            + ' After that, only the shorter part is matched and the rest of the ' + act + ' plays.\n\nReplace it anyway?')) {
+          say('Kept the ' + old.toFixed(1) + ' second ' + act + ' template. Tap Ignore if this section is part of it.');
+          b.disabled = false; return; } }
       say('Saving...');
       const a = await post(`/api/repeats/${b.dataset.rid}/accept`, {kind: act});
       await showShows(showId);
