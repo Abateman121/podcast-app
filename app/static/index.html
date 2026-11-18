@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#14171c">
-<title>Podcasts</title>
+<title>SkipJack</title>
 <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
 <link rel="icon" type="image/png" sizes="256x256" href="/icon.png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="apple-mobile-web-app-title" content="Podcasts">
+<meta name="apple-mobile-web-app-title" content="SkipJack">
 <style>
 :root{--bg:#eef0f2;--card:#fff;--ink:#15181c;--mute:#667080;--line:#d9dde2;--acc:#e8700c;--accink:#fff;--ad:#d43f3f;--io:#2f7fe0}
 @media(prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1c2027;--ink:#e9ecef;--mute:#8b94a1;--line:#2a2f38;--acc:#ff8a2b;--accink:#14171c;--ad:#ff5c5c;--io:#5aa2ff}}
@@ -513,8 +513,18 @@ function showOvercastResult(r) {
 }
 
 // ---- repeated audio found across episodes (show page) ----
-const repau = new Audio(); let repStop = 0, repTimer;
-repau.ontimeupdate = () => { if (repStop && repau.currentTime >= repStop) { repau.pause(); repStop = 0; } };
+// Preview player for Repeated audio. repWin is the part the progress bar covers: the section plus 5 s on each side.
+const repau = new Audio(); let repStop = 0, repTimer, repWin = null, repRow = null, repSeeking = false;
+const REP_PAD = 5;
+function drawRepBar() {
+  if (!repRow || !repWin || !repRow.isConnected) return;
+  const [a, z] = repWin, t = repau.currentTime;
+  if (!repSeeking) repRow.querySelector('input').value = Math.round(Math.max(0, Math.min(1, (t - a) / (z - a))) * 1000);
+  repRow.querySelector('.rpt').textContent = fmt(t) + '  (section ' + fmt(repWin[2]) + ' to ' + fmt(repWin[3]) + ')';
+  const pb = repRow.parentElement.querySelector('[data-act="play"]'); if (pb) pb.textContent = repau.paused ? 'Play' : 'Pause';
+}
+repau.ontimeupdate = () => { if (repStop && repau.currentTime >= repStop) repau.pause(); drawRepBar(); };
+repau.onplay = repau.onpause = drawRepBar;
 const onShow = showId => { const box = $('#rep'); return box && box.dataset.show === String(+showId) ? box : null; };
 async function loadRepeats(showId) {
   clearTimeout(repTimer);
@@ -533,17 +543,31 @@ async function loadRepeats(showId) {
     + r.items.map((it, i) => `<div class="rp"><div><b>${Math.round(it.seconds)} seconds</b>, in ${it.episodes} of ${it.compared} episodes. ${guess[it.guess] || ''}</div>
       <div class="s">${it.occurrences.slice(0, 3).map(o => esc(o.title) + ' at ' + fmt(o.start)).join('; ')}${it.occurrences.length > 3 ? '; and ' + (it.occurrences.length - 3) + ' more' : ''}</div>
       <div class="acts"><button type="button" class="g" data-rid="${it.id}" data-act="play" data-i="${i}">Play</button>${btn(it, 'intro', 'Use as intro')}${btn(it, 'outro', 'Use as outro')}${btn(it, 'ad', 'It is an ad')}
-      <button type="button" class="g" data-rid="${it.id}" data-act="ignore">Ignore</button></div></div>`).join('')
+      <button type="button" class="g" data-rid="${it.id}" data-act="ignore">Ignore</button></div>
+      <div class="rpp" data-i="${i}" hidden><input type="range" min="0" max="1000" value="0" style="width:100%" aria-label="Position">
+        <div class="acts"><button type="button" class="g" data-act="rjump" data-d="-5">&minus;5s</button><button type="button" class="g" data-act="rjump" data-d="5">+5s</button>
+        <span class="s rpt" style="align-self:center"></span></div></div></div>`).join('')
     + (r.state === 'need_more' ? '' : '<div class="bar"><button type="button" class="g" data-act="scan">Compare again</button></div>');
   box.onclick = async ev => {
     const b = ev.target.closest('button'); if (!b) return;
     const act = b.dataset.act, say = (m, bad) => { const el = $('#rmsg'); if (el) { el.textContent = m; el.className = 'msg' + (bad ? ' bad' : ''); } };
+    if (act === 'rjump') {
+      if (repWin) repau.currentTime = Math.max(repWin[0], Math.min(repWin[1], repau.currentTime + (+b.dataset.d)));
+      return; }
     if (act === 'play') {
       const o = r.items[+b.dataset.i].occurrences[0];
-      if (!repau.paused && repau.dataset.rid === b.dataset.rid) { repau.pause(); return; }
-      au.pause(); repau.dataset.rid = b.dataset.rid; repStop = 0;
+      const row = box.querySelector(`.rpp[data-i="${b.dataset.i}"]`);
+      if (repau.dataset.rid === b.dataset.rid && repRow === row && repWin) {   // same section: pause or resume
+        if (!repau.paused) { repau.pause(); return; }
+        if (repau.currentTime >= repWin[1] - 0.2) repau.currentTime = repWin[2];   // at the end: start over
+        au.pause(); repau.play(); return; }
+      au.pause(); repau.pause(); repau.dataset.rid = b.dataset.rid;
+      box.querySelectorAll('.rpp').forEach(x => { x.hidden = x !== row; });
+      repRow = row; repWin = [Math.max(0, o.start - REP_PAD), o.end + REP_PAD, o.start, o.end]; repStop = repWin[1];
       repau.src = '/audio/' + o.episode_id;
-      repau.onloadedmetadata = () => { repau.currentTime = o.start; repStop = o.end; repau.play(); };
+      repau.onloadedmetadata = () => { if (repau.duration) repWin[1] = repStop = Math.min(repWin[1], repau.duration);
+        repau.currentTime = o.start; repau.play(); };
+      drawRepBar();
       return; }
     b.disabled = true;
     try {
@@ -567,6 +591,9 @@ async function loadRepeats(showId) {
         : 'Saved as the ' + act + ' template. ' + a.queued + ' downloaded episodes are being re-checked in the background.');
     } catch (e) { say(readErr(e), true); b.disabled = false; }
   };
+  box.oninput = ev => { if (ev.target.closest('.rpp')) repSeeking = true; };
+  box.onchange = ev => { if (!ev.target.closest('.rpp') || !repWin) return;
+    repau.currentTime = repWin[0] + ev.target.value / 1000 * (repWin[1] - repWin[0]); repSeeking = false; drawRepBar(); };
   if (r.state === 'waiting' || r.state === 'running') repTimer = setTimeout(() => loadRepeats(showId), 5000);
 }
 
@@ -899,9 +926,30 @@ async function openIoDialog(showId, eps, done) {
   const status = async () => { const s = (await api('/api/shows')).find(x => x.id === +showId) || {};
     const len = l => l ? l.toFixed(1) + ' s' : 'none';
     $('#iostat').textContent = 'Intro template: ' + len(s.intro_template_len) + '. Outro template: ' + len(s.outro_template_len) + '.'; };
+  const show = (await api('/api/shows')).find(x => x.id === +showId) || {};
+  const refs = {intro: show.intro_template_ref, outro: show.outro_template_ref};   // where each template was cut from
   $('#ioep').innerHTML = usable.map(e => `<option value="${e.id}">${esc(e.title)}</option>`).join('');
-  ioau.src = '/audio/' + usable[0].id;
-  $('#ioep').onchange = () => { ioau.src = '/audio/' + $('#ioep').value; };
+  // Open on the episode a template came from, if it is still downloaded.
+  const refEp = [refs.intro, refs.outro].map(r => r && usable.find(e => e.id === r.episode_id)).find(Boolean);
+  $('#ioep').value = String((refEp || usable[0]).id);
+  // Fill the rows for the chosen episode: the saved template times if they came from it,
+  // otherwise what the app detected in it. Returns a note on where the times came from.
+  const fill = () => {
+    const ep = usable.find(e => e.id === +$('#ioep').value) || {}, m = ep.markers || {}, notes = [];
+    for (const kind of ['intro', 'outro']) {
+      const ref = refs[kind];
+      let s = null, t = null;
+      if (ref && ref.episode_id === ep.id) { s = ref.start; t = ref.end; notes.push('the saved ' + kind + ' template'); }
+      else if (typeof m[kind + '_end'] === 'number' || typeof m[kind + '_start'] === 'number') {
+        s = typeof m[kind + '_start'] === 'number' ? m[kind + '_start'] : (kind === 'intro' ? 0 : null);
+        t = typeof m[kind + '_end'] === 'number' ? m[kind + '_end'] : null;
+        notes.push('the ' + kind + ' detected in this episode'); }
+      $('#io_' + kind + '_start').value = s === null ? '' : (+s).toFixed(1);
+      $('#io_' + kind + '_end').value = t === null ? '' : (+t).toFixed(1); }
+    return notes.length ? 'Filled in from ' + notes.join(' and ') + '. Adjust the times, then save.'
+      : 'Pick a part of the episode that is the theme music, then press Now at the start and the end.'; };
+  ioau.src = '/audio/' + $('#ioep').value;
+  $('#ioep').onchange = () => { ioau.src = '/audio/' + $('#ioep').value; say(fill()); };
   $('#iorows').innerHTML = IO_ROWS.map(([k, label]) => `<div class="mrow"><span class="lab">${label} (seconds)</span>
     <input id="io_${k}" type="number" min="0" step="0.1">
     <button type="button" class="g" data-k="${k}" data-a="now">Now</button>
@@ -924,6 +972,8 @@ async function openIoDialog(showId, eps, done) {
     if (IO_ROWS.every(([k]) => body[k] === null)) { say('Mark an intro, an outro, or both.', true); return; }
     say('Saving...');
     try { const r = await post(`/api/shows/${showId}/templates`, body);
+      for (const kind of ['intro', 'outro']) if (body[kind + '_start'] !== null)
+        refs[kind] = {episode_id: body.episode_id, start: body[kind + '_start'], end: body[kind + '_end']};
       say('Saved. ' + r.queued + ' downloaded episodes are being re-checked in the background.'); await status(); }
     catch (e) { say(readErr(e), true); } };
   const del = kind => async () => {
@@ -931,7 +981,7 @@ async function openIoDialog(showId, eps, done) {
     try { await api(`/api/shows/${showId}/templates/${kind}`, {method: 'DELETE'}); say('Deleted. Episodes are being re-checked.'); await status(); }
     catch (e) { say(readErr(e), true); } };
   $('#iodi').onclick = del('intro'); $('#iodo').onclick = del('outro');
-  say('Pick a part of the episode that is the theme music, then press Now at the start and the end.'); await status();
+  say(fill()); await status();
   $('#iodlg').showModal();
 }
 $('#iodlg').addEventListener('close', () => { $('#ioau').pause(); if (ioDone) { const d = ioDone; ioDone = null; d(); } });

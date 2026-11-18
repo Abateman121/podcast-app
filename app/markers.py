@@ -125,8 +125,11 @@ def extract_wav(path, start, length, out_path):
     os.replace(tmp, out_path)
 
 
-def create_template(conn, show_id, kind, episode_path, start, end):
-    """Cut [start, end] out of a reference episode and store its fingerprint as the show's template."""
+def create_template(conn, show_id, kind, episode_path, start, end, episode_id=None):
+    """Cut [start, end] out of a reference episode and store its fingerprint as the show's template.
+
+    The episode and the times are kept too, so the Set intro/outro dialog can show them again.
+    """
     if kind not in KINDS:
         raise ValueError("kind must be intro or outro")
     length = float(end) - float(start)
@@ -141,8 +144,9 @@ def create_template(conn, show_id, kind, episode_path, start, end):
         os.remove(wav)
         raise ValueError(f"There is too little distinct sound in that {kind} section. Pick a part with music.")
     conn.execute(
-        f"UPDATE shows SET {kind}_template = ?, {kind}_template_len = ? WHERE id = ?",
-        (fp.pack(fingerprint), length, show_id),
+        f"UPDATE shows SET {kind}_template = ?, {kind}_template_len = ?, {kind}_template_ref = ? WHERE id = ?",
+        (fp.pack(fingerprint), length,
+         json.dumps({"episode_id": episode_id, "start": round(float(start), 1), "end": round(float(end), 1)}), show_id),
     )
     conn.commit()
     return {"kind": kind, "seconds": round(length, 1), "hashes": len(fingerprint)}
@@ -151,7 +155,8 @@ def create_template(conn, show_id, kind, episode_path, start, end):
 def delete_template(conn, show_id, kind):
     if kind not in KINDS:
         raise ValueError("kind must be intro or outro")
-    conn.execute(f"UPDATE shows SET {kind}_template = NULL, {kind}_template_len = NULL WHERE id = ?", (show_id,))
+    conn.execute(f"UPDATE shows SET {kind}_template = NULL, {kind}_template_len = NULL, {kind}_template_ref = NULL "
+                 "WHERE id = ?", (show_id,))
     conn.commit()
     wav = db.template_path(show_id, kind)
     if os.path.exists(wav):

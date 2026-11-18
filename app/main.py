@@ -23,7 +23,7 @@ from progress import ERRORS, PLAYING, PROGRESS
 
 QUEUE_STATUSES = ("queued", "downloading", "downloaded", "scanning", "error", "scan_error")
 
-app = FastAPI(title="Podcast App")
+app = FastAPI(title="SkipJack")
 
 
 @app.on_event("startup")
@@ -211,13 +211,18 @@ def list_shows():
         "SELECT id, title, image, feed_url, COALESCE(intro_skip, 0) AS intro_skip, "
         "COALESCE(outro_skip, 0) AS outro_skip, intro_template_len, outro_template_len, "
         "COALESCE(newer_than_days, 0) AS newer_than_days, keep_last, COALESCE(subscribed, 1) AS subscribed, "
-        "shorten_silence FROM shows ORDER BY title"
+        "shorten_silence, intro_template_ref, outro_template_ref FROM shows ORDER BY title"
     ).fetchall()
     silence_default = silence.global_on(conn)
     conn.close()
     out = []
     for r in rows:
         d = dict(r)
+        for key in ("intro_template_ref", "outro_template_ref"):
+            try:
+                d[key] = json.loads(d[key]) if d[key] else None
+            except ValueError:
+                d[key] = None
         d["keep_default"] = feeds.AUTO_DOWNLOAD_LATEST
         d["silence_default"] = silence_default
         out.append(d)
@@ -420,7 +425,7 @@ def set_templates(show_id: int, body: TemplatesIn):
         saved = []
         try:
             for kind, start, end in todo:
-                saved.append(markers.create_template(conn, show_id, kind, ep["file_path"], start, end))
+                saved.append(markers.create_template(conn, show_id, kind, ep["file_path"], start, end, body.episode_id))
         except ValueError as exc:
             if saved:
                 markers.queue_redetect(conn, show_id)

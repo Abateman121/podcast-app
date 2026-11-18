@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 
-UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) podcast-app/1.0"}
+UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) SkipJack/1.0"}
 
 
 class SourceError(Exception):

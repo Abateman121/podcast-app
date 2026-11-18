@@ -1,6 +1,6 @@
 {
-  "name": "Podcasts",
-  "short_name": "Podcasts",
+  "name": "SkipJack",
+  "short_name": "SkipJack",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#14171c",
