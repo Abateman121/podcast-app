@@ -128,6 +128,9 @@ The app compares the newest downloaded episodes of each show and looks for secti
 - Media Session support: lock screen and headphone controls for play, pause, seek, and next track, plus episode artwork.
 - Layout follows your system light or dark theme and is safe-area aware for phones.
 
+## Changes in v0.0.20
+- **Repeated audio**: a show has one intro template and one outro template, and the last one accepted replaces the one before. Choosing **Use as intro** or **Use as outro** on a section that is shorter than the current template now asks first. This stops a partial section from replacing the full intro or outro by mistake.
+
 ## Changes in v0.0.19
 - **Set intro/outro**: the "Intro ends at" and "Outro ends at" rows now have a **Play from here** button next to **Play 3s before** (#4).
 - **Tag an ad**: the dialog now has its own play and pause button, a position slider, and back and forward buttons (15 and 5 seconds), so you can find the edges of an ad without closing it (#5).
