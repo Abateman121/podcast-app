@@ -2,7 +2,7 @@
 
 SkipJack is a self-hosted podcast app for myself. The repo and the Docker image are still named `podcast-app`. It pulls in shows from almost any link, downloads the latest episodes, transcribes them on the GPU, and automatically skips the ads while you listen.
 
-**Current version: v0.0.20** (shown in the bottom right of the player bar on every screen)
+**Current version: v0.0.21** (shown in the bottom right of the player bar on every screen)
 
 ## Features
 
@@ -128,33 +128,55 @@ The app compares the newest downloaded episodes of each show and looks for secti
 - Media Session support: lock screen and headphone controls for play, pause, seek, and next track, plus episode artwork.
 - Layout follows your system light or dark theme and is safe-area aware for phones.
 
-## Changes in v0.0.20
+## Version history
+Everything that has been added or changed, newest first. Each version is a git tag and, from v0.0.17 on, a pinned image `ghcr.io/abateman121/podcast-app:<version>`.
+
+| Version | Date | Highlights |
+|---|---|---|
+| v0.0.21 | 2026-11-18 | Renamed to SkipJack, Set intro/outro opens with the current times, progress bar for Repeated audio |
+| v0.0.20 | 2026-11-18 | Asks before a shorter section replaces an intro or outro template |
+| v0.0.19 | 2026-11-17 | Play from here, playback controls in Tag ad, new app icon |
+| v0.0.18 | 2026-11-17 | Shorten Silence, time-saved stats |
+| v0.0.17 | 2026-11-13 | Import from Overcast; version-tagged images |
+| v0.0.16 | 2026-11-13 | Smart playlists, Up Next, Starred, Keep N downloaded, cleanup of played files |
+| v0.0.15 | 2026-11-12 | Repeated audio suggestions, coloured playback bar, edit a skipped ad range |
+| v0.0.14 | 2026-11-11 | Intro/outro detection by audio fingerprint, Tag ad, Not an ad |
+| v0.0.13 | 2026-11-10 | Version shown in the player, 0.05x speed steps |
+| v0.0.12 | 2026-11-10 | Image built by GitHub Actions and published to ghcr.io |
+| v0.0.11 | 2026-11-10 | Better ad detection rules, saved transcripts, Re-scan ads |
+| v0.0.1 | 2026-11-10 | Downloads queue, OPML import, Apple/Spotify/Amazon/YouTube links, delete shows |
+
+### v0.0.21 (2026-11-18)
 - The app is now called **SkipJack**: browser tab, home screen name, and web app manifest. The repo, the image (`ghcr.io/abateman121/podcast-app`), and the `/data` folder keep their names, so nothing changes in the compose file.
 - **Set intro/outro** now opens with the current times filled in. It picks the episode the template was cut from if that episode is still downloaded, and fills in the saved times. For other episodes it fills in the intro and outro detected in that episode. Changing the episode fills the rows again.
 - **Repeated audio**: Play now opens a progress bar for that section, with the current time and −5s and +5s buttons. The bar covers the section plus 5 seconds on each side, so you can hear the edges. Play turns into Pause, and pressing it again resumes where you stopped.
-- The episode and times each template was cut from are now saved (new show columns `intro_template_ref` and `outro_template_ref`). Templates made before this version have none, so the dialog uses the detected times until you save again.
+- The episode and times each template was cut from are now saved (new show columns `intro_template_ref` and `outro_template_ref`). Templates made before this version have none, so the dialog uses the detected times until you save again. The database upgrades itself on start.
+
+### v0.0.20 (2026-11-18)
 - **Repeated audio**: a show has one intro template and one outro template, and the last one accepted replaces the one before. Choosing **Use as intro** or **Use as outro** on a section that is shorter than the current template now asks first. This stops a partial section from replacing the full intro or outro by mistake.
 
-## Changes in v0.0.19
+### v0.0.19 (2026-11-17)
 - **Set intro/outro**: the "Intro ends at" and "Outro ends at" rows now have a **Play from here** button next to **Play 3s before** (#4).
 - **Tag an ad**: the dialog now has its own play and pause button, a position slider, and back and forward buttons (15 and 5 seconds), so you can find the edges of an ad without closing it (#5).
 - New app icon in the browser tab, on the tab bar, on the iPhone home screen, and in a web app manifest (#6).
 - For the Unraid Docker tab, copy `app/static/icon.png` to `/mnt/user/icons/podcast-app.png`. The compose example below already points there.
 
-## Changes in v0.0.18
+### v0.0.18 (2026-11-17)
 - New **Shorten Silence**: pauses in speech play faster, with a global default (off at first) and a per-show override.
 - A new background worker checks each downloaded, unplayed episode for pauses. Episodes already on disk are checked after the update, newest first.
 - Time remaining is shown in real time, and the player shows the effective speed.
 - Time saved is recorded per episode and per show, and the total is shown on the Shows tab, split into speed, silence, and skipped ads.
 - New routes: `POST /api/episodes/{id}/analyze`, `GET /api/episodes/{id}/silence`, `GET` and `POST /api/stats/time-saved`, `GET` and `POST /api/settings/silence`, `POST /api/shows/{id}/silence`. Maps are stored in `/data/silence`.
+- Tests: `tests/check_silence.py` and `tests/silence_rules.test.js`. A standalone listening test tool for the feature is in `tools/silence_test`.
 
-## Changes in v0.0.17
+### v0.0.17 (2026-11-13)
 - New **Import from Overcast** on the Shows tab: shows, play history, positions, and playlists from an Overcast "All data" export.
 - A dry run reports what the import would do before anything is saved.
 - Older unplayed episodes that are not in the export are taken off the lists, with a setting for how many days to keep (default 14).
 - Running the import again adds only what is new.
+- Release tags like `v0.0.17` now also build a version-tagged image, so a version can be pinned in the compose file.
 
-## Changes in v0.0.16
+### v0.0.16 (2026-11-13)
 - Playlists were rebuilt as smart playlists: show priorities (High, Normal, Low), four orders, manual reordering, per-episode add and hide, icons and colours, continuous play, and "play the top episode next". Existing playlists are converted. Their minutes and count limits are dropped.
 - New built-in playlists: **Up Next** (with Play Next and Play Last on every episode), **Starred**, and **Downloaded**.
 - Playlists now list every unplayed episode, not only downloaded ones. The next episode is downloaded automatically when it is next up.
@@ -163,7 +185,7 @@ The app compares the newest downloaded episodes of each show and looks for secti
 - Episodes can be starred, and removed from all playlists. Shows can be unsubscribed without losing their history.
 - The Queue tab is now called **Downloads**, so it is not confused with Up Next.
 
-## Changes in v0.0.15
+### v0.0.15 (2026-11-12)
 - New **Repeated audio** list on each show page. The app compares the newest downloaded episodes of a show and flags sections found in more than one, to confirm as intro, outro, or ad.
 - The playback bar now shows detected ads in red and the intro and outro in blue.
 - "Only from the last N days" moved from the playlist to the show, and a new per-show **Keep last N episodes** limit was added. Playlists saved earlier with a days rule keep working.
@@ -172,7 +194,7 @@ The app compares the newest downloaded episodes of each show and looks for secti
 - New settings `REPEAT_EPISODES`, `REPEAT_MIN_EPISODES`, and `REPEAT_MIN_SECONDS`.
 - New `app/repeats.py` and a sixth worker. The database upgrades itself on start.
 
-## Changes in v0.0.14
+### v0.0.14 (2026-11-11)
 - Automatic intro and outro detection for every episode. It uses an audio fingerprint of the show's theme, then chapters, then the fixed seconds as a fallback. The fixed seconds are now called fallback seconds on the show page.
 - New **Set intro/outro** tool on each show page to mark the theme once, with **Re-detect intro/outro** to redo a show.
 - A cold open before the intro is no longer skipped, and seeking back into a skipped intro does not skip it again.
@@ -180,16 +202,38 @@ The app compares the newest downloaded episodes of each show and looks for secti
 - Added **Not an ad** for ranges that were skipped by mistake.
 - New settings `SKIP_CONFIDENCE`, `AD_AUDIO_CONFIDENCE`, `INTRO_WINDOW_SECONDS`, and `OUTRO_WINDOW_SECONDS`.
 - Added numpy and scipy. The database upgrades itself on start.
+- Fixes: a `podcast:chapters` tag with no attributes no longer fails the feed refresh, and the delete-template route always closes the database connection.
 
-## Changes in v0.0.13
+### v0.0.13 (2026-11-10)
 - Added the app version in the bottom right of the player bar, so it appears on every screen.
 - Playback speed now changes in 0.05x increments instead of cycling through a fixed list (1.0, 1.25, 1.5, 1.75, 2.0, 0.8). Added `−`/`+` buttons and a tap-to-reset on the speed label.
 - Rewrote this README to cover all current features.
 
-## Releasing a new version
-The version is set in one place: the `<div id="ver">` line in `app/static/index.html`. **Bump it with every update** and add a line to the changes section above.
+### v0.0.12 (2026-11-10)
+- A GitHub Actions workflow (`.github/workflows/docker.yml`) builds the image and publishes it to `ghcr.io/abateman121/podcast-app:latest`, plus a tag per commit for rolling back.
+- The compose file uses `image:` instead of `build:`. The package on ghcr.io is public, so Tower pulls it without a login.
 
-Pushing to `main` triggers the GitHub Actions workflow, which builds the image and publishes it to `ghcr.io/abateman121/podcast-app` as `latest` (and as the commit SHA).
+### v0.0.11 (2026-11-10)
+- Ad detection rules rewritten. Opening phrases ("brought to you by", "sponsored by") and closing phrases (promo codes, URLs, "percent off") are treated differently:
+  - An opening phrase alone skips about 45 seconds.
+  - A closing phrase alone skips only if it matches at least two offer phrases, so normal talk is not cut.
+  - An opening and a closing phrase within 75 seconds mark the whole span between them.
+- Playing an episode loads its latest ad ranges first, and the player re-checks every 20 seconds, so a scan that finishes mid-episode takes effect.
+- Each scan saves its transcript in `/data/transcripts`, and **Re-scan ads** re-applies the current rules without running Whisper again.
+
+### v0.0.1 (2026-11-10)
+- New download queue tab (now **Downloads**) with a live count, progress bars for downloads and ad scans, errors, and **Retry**. Downloads and scans run in separate threads, and a restart puts unfinished items back in line.
+- **Import OPML**: adds every feed in the file and queues only the newest episode of each show, to protect the GPU.
+- The add box accepts RSS, Apple Podcasts, Spotify, Amazon Music, YouTube, and plain web pages that link to a feed. Spotify and Amazon shows are matched by name on Apple Podcasts. YouTube channels and playlists work through yt-dlp (latest 15 videos).
+- Each show has a **Delete** button that removes the show and its downloaded audio.
+
+## Releasing a new version
+The version is set in one place: the `<div id="ver">` line in `app/static/index.html`. **Bump it with every update** and add a section to the version history above.
+
+1. Push the changes to a branch named after the version, for example `v0.0.22`.
+2. Open a pull request into `main` and merge it. Pushing to `main` runs the GitHub Actions workflow, which builds the image and publishes it as `latest` (and as the commit SHA).
+3. Push a tag with the same name on the merge commit (`v0.0.22`). The workflow runs again and publishes `ghcr.io/abateman121/podcast-app:v0.0.22`, so that version can be pinned. A build takes about 2 minutes.
+4. On Tower, **Compose Up** the stack. With `image: …:latest` and `pull_policy: always` it pulls the newest `main` build. To pin a version, use the version tag instead of `latest`.
 
 ## Running it
 Example `docker-compose.yml` (Unraid with an Nvidia GPU):
