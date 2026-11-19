@@ -989,4 +989,18 @@ def audio(episode_id: int):
     return FileResponse(row["file_path"])
 
 
-app.mount("/", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static"), html=True))
+class PageFiles(StaticFiles):
+    """Static files, but the page and the manifest are always checked with the server before use.
+
+    Without this a browser can keep showing an old version of the app after an update.
+    "no-cache" still lets the browser keep a copy; it asks first and gets a cheap 304 when nothing changed.
+    """
+
+    def file_response(self, full_path, *args, **kwargs):
+        response = super().file_response(full_path, *args, **kwargs)
+        if str(full_path).endswith((".html", ".webmanifest")):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/", PageFiles(directory=os.path.join(os.path.dirname(__file__), "static"), html=True))
