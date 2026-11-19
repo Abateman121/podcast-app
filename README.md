@@ -2,7 +2,7 @@
 
 SkipJack is a self-hosted podcast app for myself. The repo and the Docker image are still named `podcast-app`. It pulls in shows from almost any link, downloads the latest episodes, transcribes them on the GPU, and automatically skips the ads while you listen.
 
-**Current version: v0.0.24** (shown in the bottom right of the player bar on every screen)
+**Current version: v0.0.25** (shown in the bottom right of the player bar on every screen)
 
 ## Features
 
@@ -133,6 +133,7 @@ Everything that has been added or changed, newest first. Each version is a git t
 
 | Version | Date | Highlights |
 |---|---|---|
+| v0.0.25 | 2026-11-19 | The page is always checked for a newer version, so an update shows on the next load |
 | v0.0.24 | 2026-11-18 | Browser Back and Forward buttons work; every screen has its own address |
 | v0.0.23 | 2026-11-18 | Tag ad: Play on the end time plays from that time |
 | v0.0.22 | 2026-11-18 | New app icon: a skipjack inside a pair of headphones |
@@ -148,6 +149,10 @@ Everything that has been added or changed, newest first. Each version is a git t
 | v0.0.12 | 2026-11-10 | Image built by GitHub Actions and published to ghcr.io |
 | v0.0.11 | 2026-11-10 | Better ad detection rules, saved transcripts, Re-scan ads |
 | v0.0.1 | 2026-11-10 | Downloads queue, OPML import, Apple/Spotify/Amazon/YouTube links, delete shows |
+
+### v0.0.25 (2026-11-19)
+- The server now tells browsers to check for a newer page (`Cache-Control: no-cache` on `index.html` and the manifest). After an update, the next load or refresh shows the new version. A hard refresh is no longer needed. Audio and icons are not affected.
+- When an episode ends, the playlist is redrawn only if its own screen is showing, checked against the address. This keeps the screen and the address in step, so Back always goes where you expect.
 
 ### v0.0.24 (2026-11-18)
 - The browser's **Back** and **Forward** buttons now move between screens (#54). Each screen has its own address: `#/playlists`, `#/playlists/<id>`, `#/shows`, `#/shows/<id>` and `#/downloads`. Changing screens never reloads the page, so playback continues.
